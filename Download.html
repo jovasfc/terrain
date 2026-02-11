@@ -1,0 +1,858 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DEM 区域下载器 (含卫星图与格式转换)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css" />
+    <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+    <!-- 引入 GeoTIFF 处理库 -->
+    <script src="https://cdn.jsdelivr.net/npm/geotiff"></script>
+    <!-- 引入地图截图插件 -->
+    <script src="https://unpkg.com/leaflet-image@0.4.0/leaflet-image.js"></script>
+    <!-- 引入 JSZip 库用于打包下载 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <style>
+        #map { height: 100%; width: 100%; border-radius: 12px; z-index: 1; }
+        #map.fullscreen { position: fixed !important; top: 0; left: 0; width: 100vw !important; height: 100vh !important; z-index: 9999 !important; border-radius: 0 !important; }
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+        /* 缩放等级显示样式 */
+        .zoom-indicator {
+            background: rgba(255, 255, 255, 0.9);
+            padding: 4px 8px;
+            border-radius: 4px;
+            border: 2px solid rgba(0,0,0,0.2);
+            font-weight: bold;
+            font-family: monospace;
+            font-size: 14px;
+        }
+        /* 全屏控制按钮样式 */
+        .fullscreen-btn {
+            background: rgba(255, 255, 255, 0.9);
+            padding: 6px 12px;
+            border-radius: 4px;
+            border: 2px solid rgba(0,0,0,0.2);
+            font-weight: bold;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .fullscreen-btn:hover { background: white; }
+        .exit-fullscreen-btn {
+            position: fixed !important;
+            top: 55px !important;
+            right: 55px !important;
+            z-index: 10000 !important;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 10px 20px;
+            border-radius: 8px;
+            border: 2px solid rgba(0,0,0,0.3);
+            font-weight: bold;
+            font-size: 14px;
+            cursor: pointer;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            display: none;
+        }
+        .exit-fullscreen-btn.visible { display: block !important; }
+        .exit-fullscreen-btn:hover { background: white; transform: scale(1.05); }
+        /* 全屏时搜索框样式 - 顶部居左，悬浮面板右侧 */
+        #search-box.fullscreen-search {
+            position: fixed !important;
+            top: 16px !important;
+            left: 330px !important;
+            right: auto !important;
+            transform: none !important;
+            z-index: 10001 !important;
+        }
+        /* 全屏时左侧按钮面板悬浮样式 */
+        .sidebar-panel {
+            transition: all 0.3s ease;
+        }
+        .sidebar-panel.fullscreen-floating {
+            position: fixed !important;
+            top: 10px !important;
+            left: 10px !important;
+            width: 300px !important;
+            max-height: calc(100vh - 20px) !important;
+            overflow-y: auto !important;
+            z-index: 10000 !important;
+            background: rgba(255, 255, 255, 0.98) !important;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3) !important;
+        }
+        .sidebar-panel.fullscreen-floating::-webkit-scrollbar {
+            width: 6px;
+        }
+        .sidebar-panel.fullscreen-floating::-webkit-scrollbar-thumb {
+            background: #94a3b8;
+            border-radius: 3px;
+        }
+    </style>
+</head>
+<body class="bg-slate-50 min-h-screen p-4 md:p-8 font-sans text-slate-900">
+    <div class="max-w-6xl mx-auto space-y-6">
+        <!-- Header -->
+        <header class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col md:flex-row justify-between items-center gap-4">
+            <div>
+                <h1 class="text-2xl font-bold text-slate-800 italic">DEM & Imagery Downloader</h1>
+                <p class="text-slate-500 text-sm">直接下载 DEM 并同步获取区域卫星影像</p>
+            </div>
+            <div class="flex items-center gap-2">
+                <input type="password" id="api-key" placeholder="输入 API Key (留空使用默认)" 
+                       class="px-4 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none w-64">
+                <a href="https://opentopography.org/developers" target="_blank" class="text-xs text-blue-500 hover:underline">获取 Key</a>
+            </div>
+        </header>
+
+        <div class="grid grid-cols-1 lg:grid-cols-4 gap-6 items-stretch">
+            <!-- Sidebar -->
+            <div class="lg:col-span-1 space-y-4" id="sidebar-container">
+                <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-4 h-full flex flex-col sidebar-panel" id="sidebar-panel">
+                    <h3 class="font-bold text-slate-700">1. 数据配置</h3>
+                    <div class="space-y-2">
+                        <label class="text-xs text-slate-500">DEM 数据集</label>
+                        <select id="dataset-select" class="w-full px-3 py-2 border rounded-lg text-sm bg-slate-50 outline-none focus:ring-2 focus:ring-blue-500">
+                            <option value="SRTMGL1" selected>SRTM GL1 (30m)</option>
+                            <option value="COP30">Copernicus GLO-30 (30m)</option>
+                            <option value="NASADEM">NASADEM (30m)</option>
+                            <option value="ALOS">ALOS World 3D (30m)</option>
+                        </select>
+                    </div>
+
+                    <div class="space-y-2">
+                        <label class="text-xs text-slate-500">卫星图下载等级 (Zoom Level)</label>
+                        <select id="zoom-select" class="w-full px-3 py-2 border rounded-lg text-sm bg-slate-50 outline-none focus:ring-2 focus:ring-blue-500">
+                            <option value="current">与当前地图视图一致</option>
+                            <option value="6">Level 6</option>
+                            <option value="7">Level 7</option>
+                            <option value="8">Level 8</option>
+                            <option value="9">Level 9</option>
+                            <option value="10">Level 10</option>
+                            <option value="11">Level 11</option>
+                            <option value="12">Level 12</option>
+                            <option value="13">Level 13</option>
+                            <option value="14">Level 14</option>
+                            <option value="15">Level 15</option>
+                            <option value="16">Level 16</option>
+                            <option value="17">Level 17</option>
+                            <option value="18">Level 18</option>
+                            <option value="19">Level 19 (最高精度)</option>
+                        </select>
+                        <p class="text-[10px] text-slate-400 italic">注：地图右上角显示当前查看的等级，建议下载等级略高于或等于查看等级。</p>
+                    </div>
+
+                    <div class="space-y-2 pt-2 border-t border-slate-100">
+                        <label class="flex items-center gap-2 text-sm cursor-pointer">
+                            <input type="checkbox" id="save-tif" class="w-4 h-4 rounded text-blue-600">
+                            <span>保存原始 .tif 文件</span>
+                        </label>
+                        <label class="flex items-center gap-2 text-sm cursor-pointer">
+                            <input type="checkbox" id="save-dem-png" checked class="w-4 h-4 rounded text-blue-600">
+                            <span>另存高程为 .png (灰度)</span>
+                        </label>
+                        <label class="flex items-center gap-2 text-sm cursor-pointer">
+                            <input type="checkbox" id="save-sat-png" checked class="w-4 h-4 rounded text-blue-600">
+                            <span>下载同区域卫星图 (.png)</span>
+                        </label>
+                    </div>
+
+                    <h3 class="font-bold text-slate-700 pt-2 text-sm border-t border-slate-100">2. 导出文件名称</h3>
+                    <div class="space-y-2">
+                        <input type="text" id="export-filename" placeholder="输入文件名称（如：dem_data）" 
+                               class="w-full px-3 py-2 border rounded-lg text-sm bg-slate-50 outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+
+                    <h3 class="font-bold text-slate-700 pt-2 text-sm border-t border-slate-100">3. 导出方式</h3>
+                    <div class="space-y-2">
+                        <label class="flex items-center gap-2 text-sm cursor-pointer">
+                            <input type="radio" name="export-mode" value="separate" checked class="w-4 h-4 text-blue-600">
+                            <span>分别导出多个文件</span>
+                        </label>
+                        <label class="flex items-center gap-2 text-sm cursor-pointer">
+                            <input type="radio" name="export-mode" value="zip" class="w-4 h-4 text-blue-600">
+                            <span>打包导出为 ZIP 文件</span>
+                        </label>
+                    </div>
+
+                    <h3 class="font-bold text-slate-700 pt-2 text-sm border-t border-slate-100">4. 范围与估算</h3>
+                    <div class="grid grid-cols-2 gap-2 text-[10px] text-slate-500 font-mono">
+                        <div class="p-2 bg-slate-50 rounded">N: <span id="val-n">-</span></div>
+                        <div class="p-2 bg-slate-50 rounded">S: <span id="val-s">-</span></div>
+                        <div class="p-2 bg-slate-50 rounded">E: <span id="val-e">-</span></div>
+                        <div class="p-2 bg-slate-50 rounded">W: <span id="val-w">-</span></div>
+                    </div>
+                    <div id="size-estimate" class="text-xs text-slate-500 italic">请在地图上划定区域...</div>
+
+                    <button id="download-btn" class="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold transition shadow-lg shadow-indigo-200 disabled:opacity-50 disabled:cursor-not-allowed mt-auto">
+                        开始批量处理
+                    </button>
+                    
+                    <div id="status-msg" class="text-xs mt-2 hidden break-words font-medium"></div>
+                </div>
+            </div>
+
+            <!-- Map -->
+            <div class="lg:col-span-3 flex flex-col h-full">
+                <div class="bg-white p-2 rounded-2xl shadow-sm border border-slate-200 relative flex-1 flex flex-col min-h-0">
+                    <!-- 地名搜索框 -->
+                    <div id="search-box" class="absolute top-4 left-4 z-[500] bg-white rounded-lg shadow-lg border border-slate-200 p-2 flex gap-2 transition-all duration-300" style="width: 320px;">
+                        <input type="text" id="location-search" placeholder="搜索地名（如：北京、上海）" 
+                               class="flex-1 px-3 py-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500">
+                        <button id="search-btn" class="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition">
+                            搜索
+                        </button>
+                    </div>
+                    <div id="map" class="flex-1 min-h-0"></div>
+                    <div id="processing-overlay" class="absolute inset-0 bg-white/70 z-[1000] hidden flex flex-col items-center justify-center rounded-2xl">
+                        <div class="animate-spin rounded-full h-12 w-12 border-4 border-indigo-600 border-t-transparent"></div>
+                        <p class="mt-4 text-indigo-800 font-bold" id="processing-text">正在处理...</p>
+                    </div>
+                </div>
+                <canvas id="hidden-canvas" class="hidden"></canvas>
+                <button id="exit-fullscreen-btn" class="exit-fullscreen-btn">退出全屏</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const DEFAULT_KEY = "ce0e6e72153e5eeb1f1d0217583827d6";
+        let selectedBounds = null;
+        let satelliteLayer = null;
+
+        const apiKeyInput = document.getElementById('api-key');
+        const datasetSelect = document.getElementById('dataset-select');
+        const zoomSelect = document.getElementById('zoom-select');
+        const downloadBtn = document.getElementById('download-btn');
+        const statusMsg = document.getElementById('status-msg');
+        const sizeEstimate = document.getElementById('size-estimate');
+        const overlay = document.getElementById('processing-overlay');
+        const procText = document.getElementById('processing-text');
+
+        apiKeyInput.value = localStorage.getItem('ot_api_key') || '';
+        apiKeyInput.addEventListener('change', () => localStorage.setItem('ot_api_key', apiKeyInput.value));
+
+        // 1. 初始化地图
+        const map = L.map('map', {
+            preferCanvas: true,
+            fadeAnimation: false,
+            zoomControl: false // 禁用默认缩放控件，稍后手动添加到右上角
+        }).setView([35, 105], 4);
+        
+        satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+            attribution: 'Esri Satellite',
+            crossOrigin: true 
+        }).addTo(map);
+
+        // 添加比例尺
+        L.control.scale({ imperial: false, metric: true, position: 'bottomleft' }).addTo(map);
+
+        // 地名搜索功能
+        let searchMarker = null;
+        const locationSearchInput = document.getElementById('location-search');
+        const searchBtn = document.getElementById('search-btn');
+
+        async function searchLocation() {
+            const query = locationSearchInput.value.trim();
+            if (!query) {
+                alert('请输入要搜索的地名');
+                return;
+            }
+
+            try {
+                // 使用Nominatim进行地理编码
+                const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1`);
+                const data = await response.json();
+
+                if (data && data.length > 0) {
+                    const result = data[0];
+                    const lat = parseFloat(result.lat);
+                    const lon = parseFloat(result.lon);
+                    const displayName = result.display_name;
+
+                    // 移除之前的标记
+                    if (searchMarker) {
+                        map.removeLayer(searchMarker);
+                    }
+
+                    // 添加新标记
+                    searchMarker = L.marker([lat, lon]).addTo(map)
+                        .bindPopup(`<b>${query}</b><br>${displayName}`)
+                        .openPopup();
+
+                    // 移动到该位置
+                    map.setView([lat, lon], 12);
+
+                    statusMsg.textContent = `已定位到: ${displayName}`;
+                    statusMsg.className = 'text-xs mt-2 text-green-600 font-medium';
+                    statusMsg.classList.remove('hidden');
+                    setTimeout(() => statusMsg.classList.add('hidden'), 3000);
+                } else {
+                    alert('未找到该地点，请尝试其他关键词');
+                }
+            } catch (error) {
+                console.error('搜索失败:', error);
+                alert('搜索失败，请检查网络连接');
+            }
+        }
+
+        // 绑定搜索事件
+        searchBtn.addEventListener('click', searchLocation);
+        locationSearchInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                searchLocation();
+            }
+        });
+
+        // 添加地图控制按钮组（缩放等级、全屏、缩放到选框、放大镜）
+        const MapControls = L.Control.extend({
+            options: { position: 'topright' },
+            onAdd: function(map) {
+                const container = L.DomUtil.create('div', 'map-controls-container');
+                container.style.cssText = 'display: flex; gap: 8px; align-items: center;';
+                
+                // 缩放等级显示
+                const zoomDiv = L.DomUtil.create('div', 'zoom-indicator', container);
+                zoomDiv.innerHTML = 'Zoom: ' + map.getZoom();
+                map.on('zoomend', function() {
+                    zoomDiv.innerHTML = 'Zoom: ' + map.getZoom();
+                });
+                
+                // 全屏按钮
+                const fullscreenBtn = L.DomUtil.create('button', 'fullscreen-btn', container);
+                fullscreenBtn.innerHTML = '⛶ 全屏';
+                fullscreenBtn.title = '全屏预览';
+                fullscreenBtn.onclick = function() {
+                    toggleFullscreen();
+                };
+                
+                // 缩放到选框按钮
+                const fitBoundsBtn = L.DomUtil.create('button', 'fullscreen-btn', container);
+                fitBoundsBtn.innerHTML = '🔍 适配选框';
+                fitBoundsBtn.title = '缩放到选框范围';
+                fitBoundsBtn.id = 'fit-bounds-btn';
+                fitBoundsBtn.style.display = 'none'; // 初始隐藏
+                fitBoundsBtn.onclick = function() {
+                    if (selectedBounds) {
+                        map.fitBounds(selectedBounds, { padding: [0, 0], animate: true });
+                    }
+                };
+                
+                // 放大镜按钮 - 选择区域并缩放
+                const zoomAreaBtn = L.DomUtil.create('button', 'fullscreen-btn', container);
+                zoomAreaBtn.innerHTML = '🔍 框选缩放';
+                zoomAreaBtn.title = '选择区域并缩放至该区域';
+                zoomAreaBtn.onclick = function() {
+                    // 启用矩形绘制模式用于框选缩放
+                    if (drawControl && drawControl._toolbars && drawControl._toolbars.draw) {
+                        drawControl._toolbars.draw._modes.rectangle.handler.enable();
+                    }
+                    // 设置标志表示这是框选缩放模式
+                    window.isZoomAreaMode = true;
+                };
+                
+                return container;
+            }
+        });
+        new MapControls().addTo(map);
+
+        // 全屏切换功能
+        let isFullscreen = false;
+        const mapElement = document.getElementById('map');
+        const exitFullscreenBtn = document.getElementById('exit-fullscreen-btn');
+
+        const sidebarPanel = document.getElementById('sidebar-panel');
+        const searchBox = document.getElementById('search-box');
+
+        function toggleFullscreen() {
+            isFullscreen = !isFullscreen;
+            if (isFullscreen) {
+                mapElement.classList.add('fullscreen');
+                exitFullscreenBtn.classList.add('visible');
+                // 左侧按钮面板悬浮
+                if (sidebarPanel) {
+                    sidebarPanel.classList.add('fullscreen-floating');
+                }
+                // 搜索框水平居中，顶部显示（使用fixed定位）
+                if (searchBox) {
+                    searchBox.classList.add('fullscreen-search');
+                }
+                setTimeout(() => map.invalidateSize(), 100);
+            } else {
+                exitFullscreen();
+            }
+        }
+
+        function exitFullscreen() {
+            isFullscreen = false;
+            mapElement.classList.remove('fullscreen');
+            exitFullscreenBtn.classList.remove('visible');
+            // 左侧按钮面板恢复正常
+            if (sidebarPanel) {
+                sidebarPanel.classList.remove('fullscreen-floating');
+            }
+            // 搜索框恢复左侧位置
+            if (searchBox) {
+                searchBox.classList.remove('fullscreen-search');
+            }
+            setTimeout(() => map.invalidateSize(), 100);
+        }
+
+        exitFullscreenBtn.onclick = exitFullscreen;
+
+        // ESC键退出全屏
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && isFullscreen) {
+                exitFullscreen();
+            }
+        });
+
+        const drawnItems = new L.FeatureGroup();
+        map.addLayer(drawnItems);
+
+        // 添加缩放控件到右上角
+        L.control.zoom({ position: 'topright' }).addTo(map);
+
+        const drawControl = new L.Control.Draw({
+            position: 'topright',
+            draw: {
+                polyline: false, polygon: false, circle: false, marker: false, circlemarker: false,
+                rectangle: { shapeOptions: { color: '#4f46e5', weight: 2 } }
+            },
+            edit: { featureGroup: drawnItems, remove: true }
+        });
+        map.addControl(drawControl);
+
+        map.on(L.Draw.Event.CREATED, (e) => {
+            const bounds = e.layer.getBounds();
+            
+            // 检查是否是框选缩放模式
+            if (window.isZoomAreaMode) {
+                // 框选缩放模式：缩放到该区域，不保存选框
+                map.fitBounds(bounds, { padding: [3, 3], animate: true });
+                window.isZoomAreaMode = false;
+                // 不添加到 drawnItems，只是临时绘制
+                return;
+            }
+            
+            // 正常模式：保存为选框
+            drawnItems.clearLayers();
+            drawnItems.addLayer(e.layer);
+            updateUI(bounds);
+            
+            // 显示"缩放到选框"按钮
+            const fitBoundsBtn = document.getElementById('fit-bounds-btn');
+            if (fitBoundsBtn) {
+                fitBoundsBtn.style.display = 'block';
+            }
+        });
+        
+        // 当删除选框时隐藏按钮
+        map.on(L.Draw.Event.DELETED, () => {
+            const fitBoundsBtn = document.getElementById('fit-bounds-btn');
+            if (fitBoundsBtn) {
+                fitBoundsBtn.style.display = 'none';
+            }
+            selectedBounds = null;
+        });
+
+        function updateUI(bounds) {
+            selectedBounds = bounds;
+            const w = bounds.getWest(), s = bounds.getSouth(), e = bounds.getEast(), n = bounds.getNorth();
+            document.getElementById('val-n').innerText = n.toFixed(4);
+            document.getElementById('val-s').innerText = s.toFixed(4);
+            document.getElementById('val-e').innerText = e.toFixed(4);
+            document.getElementById('val-w').innerText = w.toFixed(4);
+
+            const area = Math.abs(e - w) * Math.abs(n - s);
+            const estimatedMB = area * 50; 
+            if (estimatedMB > 20) {
+                sizeEstimate.innerHTML = `<span class="text-red-500 font-bold">警告: 约 ${estimatedMB.toFixed(1)}MB (超限)</span>`;
+                downloadBtn.disabled = true;
+            } else {
+                sizeEstimate.innerHTML = `<span class="text-green-600">估算大小: ~${estimatedMB.toFixed(1)}MB</span>`;
+                downloadBtn.disabled = false;
+            }
+        }
+
+        // 2. 导出卫星图
+        async function captureSatelliteImage(filename) {
+            return new Promise((resolve) => {
+                const targetZoom = zoomSelect.value;
+                const originalZoom = map.getZoom();
+                const originalCenter = map.getCenter();
+
+                const prepareView = () => {
+                    return new Promise((res) => {
+                        if (targetZoom !== 'current') {
+                            map.once('moveend', () => setTimeout(res, 1000)); 
+                            map.setView(selectedBounds.getCenter(), parseInt(targetZoom), { animate: false });
+                        } else {
+                            setTimeout(res, 300);
+                        }
+                    });
+                };
+
+                prepareView().then(() => {
+                    leafletImage(map, function(err, canvas) {
+                        if (err) {
+                            console.error(err);
+                            resolve(null);
+                            return;
+                        }
+                        
+                        const nwPoint = map.latLngToContainerPoint(selectedBounds.getNorthWest());
+                        const sePoint = map.latLngToContainerPoint(selectedBounds.getSouthEast());
+                        
+                        let x = Math.round(nwPoint.x);
+                        let y = Math.round(nwPoint.y);
+                        let width = Math.round(sePoint.x - nwPoint.x);
+                        let height = Math.round(sePoint.y - nwPoint.y);
+
+                        const canvasWidth = canvas.width;
+                        const canvasHeight = canvas.height;
+
+                        if (x < 0) { width += x; x = 0; }
+                        if (y < 0) { height += y; y = 0; }
+                        width = Math.min(width, canvasWidth - x);
+                        height = Math.min(height, canvasHeight - y);
+
+                        if (width <= 0 || height <= 0) {
+                            console.error("Selection bounds out of view at this zoom level.");
+                            resolve(null);
+                            return;
+                        }
+
+                        const cropCanvas = document.createElement('canvas');
+                        cropCanvas.width = width;
+                        cropCanvas.height = height;
+                        const ctx = cropCanvas.getContext('2d');
+                        ctx.drawImage(canvas, x, y, width, height, 0, 0, width, height);
+                        
+                        const dataUrl = cropCanvas.toDataURL("image/png");
+                        triggerDownload(dataUrl, filename || `sat_${Date.now()}.png`);
+                        
+                        if (targetZoom !== 'current') {
+                            map.setView(originalCenter, originalZoom, { animate: false });
+                        }
+                        resolve(true);
+                    });
+                });
+            });
+        }
+
+        // 3. 处理 TIFF 到 PNG，返回高度统计信息
+        async function convertTiffToPng(blob, filename) {
+            const arrayBuffer = await blob.arrayBuffer();
+            const tiff = await GeoTIFF.fromArrayBuffer(arrayBuffer);
+            const image = await tiff.getImage();
+            const data = await image.readRasters();
+            const width = image.getWidth();
+            const height = image.getHeight();
+
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            const imageData = ctx.createImageData(width, height);
+
+            let min = Infinity, max = -Infinity;
+            for (let i = 0; i < data[0].length; i++) {
+                if (data[0][i] < min) min = data[0][i];
+                if (data[0][i] > max) max = data[0][i];
+            }
+
+            for (let i = 0; i < data[0].length; i++) {
+                const val = ((data[0][i] - min) / (max - min)) * 255;
+                const idx = i * 4;
+                imageData.data[idx] = val;     
+                imageData.data[idx+1] = val;   
+                imageData.data[idx+2] = val;   
+                imageData.data[idx+3] = 255;   
+            }
+
+            ctx.putImageData(imageData, 0, 0);
+            triggerDownload(canvas.toDataURL("image/png"), filename);
+            
+            // 返回高度统计信息
+            return { min, max, width, height };
+        }
+
+        function triggerDownload(url, filename) {
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        }
+
+        // 生成 DEM 统计信息内容
+        function generateDemStatsContent(stats) {
+            return `DEM 统计信息
+================
+导出时间: ${new Date().toLocaleString()}
+
+区域范围:
+  北纬: ${stats.north}°
+  南纬: ${stats.south}°
+  东经: ${stats.east}°
+  西经: ${stats.west}°
+
+图像尺寸: ${stats.width} x ${stats.height} 像素
+
+高程统计:
+  最高点: ${stats.max.toFixed(2)} 米
+  最低点: ${stats.min.toFixed(2)} 米
+  高差: ${(stats.max - stats.min).toFixed(2)} 米
+`;
+        }
+
+        // 生成并下载 DEM 统计信息文件
+        function downloadDemStats(filename, stats) {
+            const content = generateDemStatsContent(stats);
+            const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+            const url = window.URL.createObjectURL(blob);
+            triggerDownload(url, filename);
+        }
+
+        // 将 Data URL 转换为 Blob
+        function dataURLtoBlob(dataURL) {
+            const arr = dataURL.split(',');
+            const mime = arr[0].match(/:(.*?);/)[1];
+            const bstr = atob(arr[1]);
+            let n = bstr.length;
+            const u8arr = new Uint8Array(n);
+            while (n--) {
+                u8arr[n] = bstr.charCodeAt(n);
+            }
+            return new Blob([u8arr], { type: mime });
+        }
+
+        // 修改后的 TIFF 转 PNG 函数，返回数据和统计信息
+        async function convertTiffToPngData(blob) {
+            const arrayBuffer = await blob.arrayBuffer();
+            const tiff = await GeoTIFF.fromArrayBuffer(arrayBuffer);
+            const image = await tiff.getImage();
+            const data = await image.readRasters();
+            const width = image.getWidth();
+            const height = image.getHeight();
+
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            const imageData = ctx.createImageData(width, height);
+
+            let min = Infinity, max = -Infinity;
+            for (let i = 0; i < data[0].length; i++) {
+                if (data[0][i] < min) min = data[0][i];
+                if (data[0][i] > max) max = data[0][i];
+            }
+
+            for (let i = 0; i < data[0].length; i++) {
+                const val = ((data[0][i] - min) / (max - min)) * 255;
+                const idx = i * 4;
+                imageData.data[idx] = val;
+                imageData.data[idx + 1] = val;
+                imageData.data[idx + 2] = val;
+                imageData.data[idx + 3] = 255;
+            }
+
+            ctx.putImageData(imageData, 0, 0);
+            const pngDataUrl = canvas.toDataURL("image/png");
+
+            return {
+                dataUrl: pngDataUrl,
+                stats: { min, max, width, height }
+            };
+        }
+
+        // 修改后的卫星图捕获函数，返回数据
+        async function captureSatelliteImageData() {
+            return new Promise((resolve) => {
+                const targetZoom = zoomSelect.value;
+                const originalZoom = map.getZoom();
+                const originalCenter = map.getCenter();
+
+                const prepareView = () => {
+                    return new Promise((res) => {
+                        if (targetZoom !== 'current') {
+                            map.once('moveend', () => setTimeout(res, 1000));
+                            map.setView(selectedBounds.getCenter(), parseInt(targetZoom), { animate: false });
+                        } else {
+                            setTimeout(res, 300);
+                        }
+                    });
+                };
+
+                prepareView().then(() => {
+                    leafletImage(map, function (err, canvas) {
+                        if (err) {
+                            console.error(err);
+                            resolve(null);
+                            return;
+                        }
+
+                        const nwPoint = map.latLngToContainerPoint(selectedBounds.getNorthWest());
+                        const sePoint = map.latLngToContainerPoint(selectedBounds.getSouthEast());
+
+                        let x = Math.round(nwPoint.x);
+                        let y = Math.round(nwPoint.y);
+                        let width = Math.round(sePoint.x - nwPoint.x);
+                        let height = Math.round(sePoint.y - nwPoint.y);
+
+                        const canvasWidth = canvas.width;
+                        const canvasHeight = canvas.height;
+
+                        if (x < 0) { width += x; x = 0; }
+                        if (y < 0) { height += y; y = 0; }
+                        width = Math.min(width, canvasWidth - x);
+                        height = Math.min(height, canvasHeight - y);
+
+                        if (width <= 0 || height <= 0) {
+                            console.error("Selection bounds out of view at this zoom level.");
+                            resolve(null);
+                            return;
+                        }
+
+                        const cropCanvas = document.createElement('canvas');
+                        cropCanvas.width = width;
+                        cropCanvas.height = height;
+                        const ctx = cropCanvas.getContext('2d');
+                        ctx.drawImage(canvas, x, y, width, height, 0, 0, width, height);
+
+                        const dataUrl = cropCanvas.toDataURL("image/png");
+
+                        if (targetZoom !== 'current') {
+                            map.setView(originalCenter, originalZoom, { animate: false });
+                        }
+                        resolve(dataUrl);
+                    });
+                });
+            });
+        }
+
+        // 4. 主下载逻辑
+        downloadBtn.onclick = async () => {
+            const key = apiKeyInput.value.trim() || DEFAULT_KEY;
+            if (!selectedBounds) return;
+
+            // 获取用户输入的文件名
+            let baseFilename = document.getElementById('export-filename').value.trim();
+            if (!baseFilename) {
+                baseFilename = 'dem_export';
+            }
+            // 清理文件名，移除非法字符
+            baseFilename = baseFilename.replace(/[<>:"/\\|?*]/g, '_');
+
+            // 获取导出模式
+            const exportMode = document.querySelector('input[name="export-mode"]:checked').value;
+            const isZipMode = exportMode === 'zip';
+
+            const w = selectedBounds.getWest(), s = selectedBounds.getSouth(), e = selectedBounds.getEast(), n = selectedBounds.getNorth();
+            const demType = datasetSelect.value;
+            const url = `https://portal.opentopography.org/API/globaldem?demtype=${demType}&south=${s}&north=${n}&west=${w}&east=${e}&outputFormat=GTiff&API_Key=${key}`;
+
+            overlay.classList.remove('hidden');
+            showStatus("任务启动...", "blue");
+
+            let demStats = null;
+            const zip = isZipMode ? new JSZip() : null;
+            const zipFilename = `${baseFilename}.zip`;
+
+            try {
+                const response = await fetch(url);
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+                const blob = await response.blob();
+                if (blob.type.includes('text')) throw new Error("API 响应错误: " + await blob.text());
+
+                // 保存 TIF 文件
+                if (document.getElementById('save-tif').checked) {
+                    procText.innerText = isZipMode ? "正在处理 TIF 文件..." : "正在保存 TIF 文件...";
+                    if (isZipMode) {
+                        const tifArrayBuffer = await blob.arrayBuffer();
+                        zip.file(`${baseFilename}+dem.tif`, tifArrayBuffer);
+                    } else {
+                        const tifUrl = window.URL.createObjectURL(blob);
+                        triggerDownload(tifUrl, `${baseFilename}+dem.tif`);
+                    }
+                }
+
+                // 转换并保存 PNG 高程图
+                if (document.getElementById('save-dem-png').checked) {
+                    procText.innerText = isZipMode ? "正在进行 TIFF 到 PNG 转换..." : "正在进行 TIFF 到 PNG 的高程转换...";
+                    const { dataUrl, stats } = await convertTiffToPngData(blob);
+                    demStats = stats;
+
+                    if (isZipMode) {
+                        const pngBlob = dataURLtoBlob(dataUrl);
+                        zip.file(`${baseFilename}+dem.png`, pngBlob);
+                    } else {
+                        triggerDownload(dataUrl, `${baseFilename}+dem.png`);
+                    }
+                }
+
+                // 导出 DEM 统计信息文件
+                if (demStats) {
+                    procText.innerText = isZipMode ? "正在生成 DEM 统计信息..." : "正在导出 DEM 统计信息...";
+                    const statsContent = generateDemStatsContent({
+                        ...demStats,
+                        north: n,
+                        south: s,
+                        east: e,
+                        west: w
+                    });
+
+                    if (isZipMode) {
+                        zip.file(`${baseFilename}+dem.txt`, statsContent);
+                    } else {
+                        const statsBlob = new Blob([statsContent], { type: 'text/plain;charset=utf-8' });
+                        const statsUrl = window.URL.createObjectURL(statsBlob);
+                        triggerDownload(statsUrl, `${baseFilename}+dem.txt`);
+                    }
+                }
+
+                // 捕获并保存卫星图
+                if (document.getElementById('save-sat-png').checked) {
+                    procText.innerText = isZipMode ? "正在捕获卫星影像..." : "正在捕获高清卫星影像...";
+                    const satDataUrl = await captureSatelliteImageData();
+
+                    if (satDataUrl) {
+                        if (isZipMode) {
+                            const satBlob = dataURLtoBlob(satDataUrl);
+                            zip.file(`${baseFilename}+sat.png`, satBlob);
+                        } else {
+                            triggerDownload(satDataUrl, `${baseFilename}+sat.png`);
+                        }
+                    }
+                }
+
+                // 如果是 ZIP 模式，生成并下载 ZIP 文件
+                if (isZipMode) {
+                    procText.innerText = "正在打包 ZIP 文件...";
+                    const zipBlob = await zip.generateAsync({ type: 'blob' });
+                    const zipUrl = window.URL.createObjectURL(zipBlob);
+                    triggerDownload(zipUrl, zipFilename);
+                }
+
+                showStatus(isZipMode ? "ZIP 打包完成！" : "所有任务完成！", "green");
+            } catch (err) {
+                showStatus("错误: " + err.message, "red");
+                console.error(err);
+            } finally {
+                overlay.classList.add('hidden');
+            }
+        };
+
+        function showStatus(msg, color) {
+            statusMsg.innerText = msg;
+            statusMsg.classList.remove('hidden', 'text-red-500', 'text-blue-500', 'text-green-500');
+            statusMsg.classList.add(`text-${color}-500`);
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,3459 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D 地貌分析系统 - 增强版</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/geotiff@2.0.1/dist-browser/geotiff.bundle.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #09090b; font-family: ui-sans-serif, system-ui, sans-serif; }
+        canvas { display: block; }
+        
+        .panel {
+            position: absolute;
+            background: rgba(18, 18, 21, 0.85);
+            backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: #e4e4e7;
+            border-radius: 16px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            z-index: 100;
+            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s;
+        }
+
+        .panel-header {
+            padding: 12px 16px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+        }
+
+        .panel-content { padding: 16px; transition: all 0.3s; overflow-y: auto; max-height: calc(100vh - 150px); }
+        .panel.collapsed .panel-content { display: none; }
+
+        .controls-panel { top: 20px; left: 20px; width: 300px; }
+        .palette-panel { top: 20px; right: 20px; width: 280px; }
+
+        .section-title {
+            font-size: 0.65rem; text-transform: uppercase; color: #71717a;
+            letter-spacing: 0.15em; margin-bottom: 0.8rem; margin-top: 1.2rem;
+            display: flex; align-items: center; font-weight: 700;
+        }
+        .section-title::after { content: ""; flex: 1; height: 1px; background: rgba(255,255,255,0.05); margin-left: 10px; }
+
+        input[type="range"] { width: 100%; height: 4px; background: #27272a; border-radius: 2px; appearance: none; cursor: pointer; }
+        input[type="range"]::-webkit-slider-thumb { appearance: none; width: 12px; height: 12px; background: #3b82f6; border-radius: 50%; }
+
+        .btn-action {
+            background: #27272a; border: 1px solid #3f3f46; color: #a1a1aa;
+            padding: 6px; border-radius: 6px; font-size: 11px; transition: all 0.2s;
+            text-align: center; width: 100%;
+        }
+        .btn-action:hover { border-color: #71717a; color: #fff; }
+        .btn-action.active { background: rgba(59, 130, 246, 0.2); border-color: #3b82f6; color: #60a5fa; }
+        .btn-danger:hover { border-color: #ef4444; color: #f87171; }
+
+        .palette-card {
+            padding: 5px; border-radius: 10px; border: 1px solid transparent;
+            cursor: pointer; transition: all 0.2s; margin-bottom: 3px;
+            background: rgba(255,255,255,0.02);
+            display: flex; flex-direction: column; gap: 3px;
+        }
+        .palette-card:hover { background: rgba(255,255,255,0.04); }
+        .palette-card.active { border-color: #3b82f6; background: rgba(59, 130, 246, 0.1); }
+
+        .swatch-row { 
+            display: flex; 
+            height: 10px; 
+            border-radius: 3px; 
+            overflow: hidden; 
+            width: 100%;
+        }
+        .swatch-item { 
+            flex: 1; 
+            height: 100%; 
+            border-right: 0.5px solid rgba(0,0,0,0.1); 
+        }
+        .swatch-item:last-child { border-right: none; }
+
+        .toggle-switch {
+            position: relative; width: 36px; height: 20px;
+            background: #27272a; border-radius: 20px; cursor: pointer;
+        }
+        .toggle-circle {
+            position: absolute; top: 2px; left: 2px; width: 16px; height: 16px;
+            background: #a1a1aa; border-radius: 50%; transition: 0.2s;
+        }
+        input:checked + .toggle-switch { background: #3b82f6; }
+        input:checked + .toggle-switch .toggle-circle { transform: translateX(16px); background: #fff; }
+
+        .floating-toolbar {
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(18, 18, 21, 0.9);
+            backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 8px 12px;
+            display: flex;
+            flex-direction: row;
+            align-items: center;
+            gap: 8px;
+            z-index: 1000;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+            cursor: move;
+            user-select: none;
+            min-width: fit-content;
+            transition: opacity 0.2s;
+        }
+
+        .floating-toolbar.collapsed {
+            padding: 8px;
+        }
+
+        .floating-toolbar.collapsed .toolbar-content {
+            display: none;
+        }
+
+        .toolbar-toggle {
+            background: #27272a;
+            border: 1px solid #3f3f46;
+            color: #a1a1aa;
+            padding: 8px;
+            border-radius: 8px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .toolbar-toggle:hover {
+            border-color: #71717a;
+            color: #fff;
+        }
+
+        .toolbar-content {
+            display: flex;
+            flex-direction: row;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .toolbar-btn {
+            background: #27272a;
+            border: 1px solid #3f3f46;
+            color: #a1a1aa;
+            padding: 8px 12px;
+            border-radius: 8px;
+            font-size: 12px;
+            transition: all 0.2s;
+            text-align: center;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+
+        .toolbar-btn:hover {
+            border-color: #71717a;
+            color: #fff;
+            background: #3f3f46;
+        }
+
+        .toolbar-btn.active {
+            background: rgba(59, 130, 246, 0.2);
+            border-color: #3b82f6;
+            color: #60a5fa;
+        }
+
+        .toolbar-info {
+            background: rgba(59, 130, 246, 0.1);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            border-radius: 8px;
+            padding: 8px 12px;
+            font-size: 11px;
+            color: #60a5fa;
+            text-align: center;
+            white-space: nowrap;
+        }
+    </style>
+</head>
+<body>
+
+<!-- 浮动工具条 -->
+<div class="floating-toolbar" id="toolbar">
+    <button class="toolbar-toggle" id="toolbar-toggle-btn">🔧</button>
+    <div class="toolbar-content">
+        <button class="toolbar-btn" id="tool-marker" title="点击标记高程">📍 标记高程</button>
+        <button class="toolbar-btn" id="tool-line" title="划线计算长度">📏 测量长度</button>
+        <button class="toolbar-btn" id="tool-area" title="划区计算面积">📐 测量面积</button>
+        <button class="toolbar-btn" id="tool-clear" title="清除所有标记">🗑️ 清除标记</button>
+        <div class="toolbar-info" id="measure-info">距离: 0m</div>
+    </div>
+</div>
+
+<!-- 左侧主控面板 -->
+<div class="panel controls-panel" id="main-panel">
+    <div class="panel-header" onclick="togglePanel('main-panel')">
+        <div>
+            <h1 class="text-sm font-bold">地貌引擎 v2.3</h1>
+            <p class="text-[9px] text-zinc-500 tracking-tighter">ADVANCED TERRAIN SYSTEM</p>
+        </div>
+        <span class="fold-icon">▼</span>
+    </div>
+    <div class="panel-content">
+        <!-- 1. 批量导入 -->
+        <div class="section-title">批量导入</div>
+        <div class="space-y-2">
+            <div class="grid grid-cols-2 gap-2">
+                <label class="btn-action cursor-pointer" title="导入ZIP文件，自动识别dem.png、dem.txt、sat.png">
+                    📦 导入ZIP <input type="file" id="zip-input" accept=".zip" class="hidden">
+                </label>
+                <label class="btn-action cursor-pointer" title="选择文件夹，自动识别dem.png、dem.txt、sat.png">
+                    📁 导入文件夹 <input type="file" id="folder-input" webkitdirectory directory multiple class="hidden">
+                </label>
+            </div>
+            <div id="import-status" class="text-[10px] text-zinc-500 hidden"></div>
+            <div id="dem-info-display" class="text-[10px] text-zinc-400 hidden mt-2 p-2 bg-zinc-800 rounded"></div>
+        </div>
+
+        <!-- 2. 数据交互 -->
+        <div class="section-title">数据交互</div>
+        <div class="grid grid-cols-3 gap-2">
+            <label class="btn-action cursor-pointer">
+                高度图 <input type="file" id="heightmap-input" accept="image/*" class="hidden">
+            </label>
+            <label class="btn-action cursor-pointer">
+                纹理图 <input type="file" id="texture-input" accept="image/*" class="hidden">
+            </label>
+            <label class="btn-action cursor-pointer" title="导入DEM统计信息文件">
+                高程值 <input type="file" id="dem-txt-input" accept=".txt" class="hidden">
+            </label>
+            <button id="generate-random-terrain" class="btn-action col-span-3" title="生成随机地形">🎲 生成随机地形</button>
+            <button id="remove-texture" class="btn-action btn-danger col-span-3 hidden">移除叠加纹理</button>
+        </div>
+
+        <!-- 3. 地形调节 -->
+        <div class="section-title">地形调节</div>
+        <div class="space-y-3">
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <div class="flex justify-between mb-1 text-[10px] text-zinc-400">
+                        <label>渲染精度</label>
+                        <span id="detail-val" class="text-blue-400 font-mono">360</span>
+                    </div>
+                    <input type="range" id="detail-scale" min="90" max="720" step="90" value="360">
+                </div>
+                <div>
+                    <div class="flex justify-between mb-1 text-[10px] text-zinc-400">
+                        <label>高度系数</label>
+                        <span id="height-val" class="text-blue-400 font-mono">1.0x</span>
+                    </div>
+                    <input type="range" id="height-scale" min="0.01" max="3" step="0.01" value="1">
+                </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3">
+                <div class="flex items-center justify-between py-1">
+                    <span class="text-[11px]">显示等高线</span>
+                    <input type="checkbox" id="contour-toggle" class="w-4 h-4 accent-blue-500">
+                </div>
+                <div class="flex items-center justify-between py-1">
+                    <span class="text-[11px]">显示高程</span>
+                    <input type="checkbox" id="contour-labels-toggle" class="w-4 h-4 accent-blue-500">
+                </div>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <div class="flex justify-between mb-1 text-[10px] text-zinc-400">
+                        <label>等高距</label>
+                        <span id="contour-spacing-val" class="text-zinc-500 font-mono">20.0</span>
+                    </div>
+                    <input type="range" id="contour-spacing" min="1" max="50" step="1" value="20">
+                </div>
+                <div>
+                    <div class="flex justify-between mb-1 text-[10px] text-zinc-400">
+                        <label>线宽</label>
+                        <span id="contour-width-val" class="text-zinc-500 font-mono">1.0</span>
+                    </div>
+                    <input type="range" id="contour-width" min="0.5" max="5" step="0.5" value="1">
+                </div>
+            </div>
+        </div>
+
+        <!-- 4. 渲染模式 -->
+        <div class="section-title">渲染模式</div>
+        <div class="space-y-3">
+            <div class="grid grid-cols-2 gap-3">
+                <div class="flex items-center justify-between py-1">
+                    <span id="render-mode-label" class="text-[11px]">分层设色</span>
+                    <label class="inline-flex items-center cursor-pointer">
+                        <input type="checkbox" id="render-mode-toggle" class="hidden">
+                        <div class="toggle-switch"><div class="toggle-circle"></div></div>
+                    </label>
+                </div>
+                <div class="flex items-center justify-between py-1">
+                    <span class="text-[11px]">去除配色</span>
+                    <input type="checkbox" id="remove-palette-toggle" class="w-4 h-4 accent-blue-500">
+                </div>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+                <div class="flex items-center justify-between py-1">
+                    <span class="text-[11px]">默认底色</span>
+                    <input type="color" id="base-color" class="w-8 h-6 cursor-pointer rounded" value="#808080">
+                </div>
+                <div class="flex items-center justify-between py-1">
+                    <span class="text-[11px]">等高线颜色</span>
+                    <input type="color" id="contour-color" class="w-8 h-6 cursor-pointer rounded" value="#ffffff">
+                </div>
+            </div>
+            <div>
+                <div class="flex justify-between mb-1 text-[10px] text-zinc-400">
+                    <label>纹理透明度</label>
+                    <span id="texture-opacity-val" class="text-zinc-500 font-mono">80%</span>
+                </div>
+                <input type="range" id="texture-opacity" min="0" max="100" step="5" value="80">
+            </div>
+        </div>
+
+        <!-- 5. 环境光照 -->
+        <div class="section-title">环境光照</div>
+        <div class="space-y-3">
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <div class="flex justify-between mb-1 text-[10px] text-zinc-400">
+                        <label>基础环境光</label>
+                        <span id="ambient-val" class="text-zinc-500 font-mono">0.7</span>
+                    </div>
+                    <input type="range" id="ambient-intensity" min="0" max="2" step="0.1" value="0.7">
+                </div>
+                <div>
+                    <div class="flex justify-between mb-1 text-[10px] text-zinc-400">
+                        <label>太阳光强度</label>
+                        <span id="sun-val" class="text-zinc-500 font-mono">0.9</span>
+                    </div>
+                    <input type="range" id="sun-intensity" min="0" max="3" step="0.1" value="0.9">
+                </div>
+            </div>
+            <div class="grid grid-cols-2 gap-4">
+                <div>
+                    <div class="flex justify-between mb-2 text-[10px] text-zinc-400">
+                        <label>太阳高度角</label>
+                        <span id="sun-elevation-val" class="text-blue-400 font-mono">45°</span>
+                    </div>
+                    <input type="range" id="sun-elevation" min="0" max="90" step="1" value="45">
+                </div>
+                <div>
+                    <div class="flex justify-between mb-2 text-[10px] text-zinc-400">
+                        <label>太阳方位角</label>
+                        <span id="sun-azimuth-val" class="text-blue-400 font-mono">45°</span>
+                    </div>
+                    <input type="range" id="sun-azimuth" min="0" max="360" step="1" value="45">
+                </div>
+            </div>
+        </div>
+
+        <!-- 6. 导出功能 -->
+        <div class="section-title">导出功能</div>
+        <div class="flex gap-2">
+            <button id="export-contours" class="btn-action flex-1" title="导出等高线SVG、PNG和高度图DEM">
+                📏 导出等高线
+            </button>
+            <button id="export-hypsometric" class="btn-action flex-1" title="导出分层设色地形图SVG和PNG">
+                🎨 导出分层设色
+            </button>
+        </div>
+
+        <div class="section-title">太阳位置计算</div>
+        <div class="space-y-3">
+            <div class="grid grid-cols-2 gap-4">
+                <div>
+                    <div class="flex justify-between mb-2 text-[10px] text-zinc-400">
+                        <label>纬度</label>
+                        <span id="latitude-val" class="text-zinc-500 font-mono">39.9°</span>
+                    </div>
+                    <input type="range" id="latitude" min="-90" max="90" step="0.1" value="39.9">
+                </div>
+                <div>
+                    <div class="flex justify-between mb-2 text-[10px] text-zinc-400">
+                        <label>日期</label>
+                        <span id="date-val" class="text-zinc-500 font-mono">2024-06-21</span>
+                    </div>
+                    <input type="date" id="date-input" class="w-full px-2 py-1 text-[10px] bg-zinc-800 border border-zinc-700 rounded text-zinc-300">
+                </div>
+            </div>
+            <div class="flex gap-2">
+                <button id="auto-locate" class="btn-action flex-1">自动获取位置</button>
+                <button id="auto-date" class="btn-action flex-1">自动获取日期</button>
+                <button id="calc-sun" class="btn-action flex-1 bg-blue-900/30 border-blue-800">计算太阳位置</button>
+            </div>
+        </div>
+
+        <div class="section-title">时间控制</div>
+        <div class="space-y-3">
+            <div>
+                <div class="flex justify-between mb-2 text-[10px] text-zinc-400">
+                    <label>时间</label>
+                    <span id="time-val" class="text-zinc-500 font-mono">12:00</span>
+                </div>
+                <input type="range" id="time-slider" min="0" max="1440" step="1" value="720">
+                <div class="flex justify-between mt-1 text-[9px] text-zinc-600">
+                    <span id="sunrise-time">日出: --:--</span>
+                    <span id="sunset-time">日落: --:--</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="section-title">可视化增强</div>
+        <div class="grid grid-cols-2 gap-2">
+            <button id="wireframe-toggle" class="btn-action">结构网格</button>
+            <button id="river-toggle" class="btn-action">水流追踪</button>
+        </div>
+    </div>
+</div>
+
+<!-- 右侧配色面板 -->
+<div class="panel palette-panel" id="color-panel">
+    <div class="panel-header" onclick="togglePanel('color-panel')">
+        <div class="section-title !m-0">18种配色方案</div>
+        <span class="fold-icon">▼</span>
+    </div>
+    <div class="panel-content overflow-y-auto max-h-[65vh]" id="palette-list">
+        <!-- 动态生成 -->
+    </div>
+    <div class="panel-content" style="border-top: 1px solid rgba(255,255,255,0.05); padding-top: 1px; padding-bottom: 20px;">
+        <div class="section-title">自定义配色</div>
+        
+        <div class="grid grid-cols-8 gap-0 mb-3" id="custom-color-inputs">
+            <input type="color" class="w-full h-6 cursor-pointer" value="#051a10" >
+            <input type="color" class="w-full h-6 cursor-pointer" value="#14311c" >
+            <input type="color" class="w-full h-6 cursor-pointer" value="#2a4d31" >
+            <input type="color" class="w-full h-6 cursor-pointer" value="#4d5d3d" >
+            <input type="color" class="w-full h-6 cursor-pointer" value="#7b6d4e" >
+            <input type="color" class="w-full h-6 cursor-pointer" value="#a38c6d" >
+            <input type="color" class="w-full h-6 cursor-pointer" value="#d4c0a1" >
+            <input type="color" class="w-full h-6 cursor-pointer" value="#ffffff" >
+        </div>
+        <button id="apply-custom-palette" class="btn-action">应用自定义配色</button>
+    </div>
+</div>
+
+<script>
+    let scene, camera, renderer, controls, terrain, geometry, material;
+    let ambientLight, sunLight;
+    let heightData = null, rawWidth = 0, rawHeight = 0;
+    let customTexture = null;
+    let contourLabelsGroup = null;
+    
+    const paletteData = [
+        { name: '经典地理', colors: [0x051a10, 0x14311c, 0x2a4d31, 0x4d5d3d, 0x7b6d4e, 0xa38c6d, 0xd4c0a1, 0xffffff] },
+        { name: '卫星遥感', colors: [0x0b141a, 0x1a2b26, 0x2d3d2a, 0x4a5c31, 0x7a8a47, 0xa49a6a, 0xd1c4a1, 0xf2ebe1] },
+        { name: '冰岛苔藓', colors: [0x0c1109, 0x182312, 0x27381b, 0x3d542d, 0x5a7a44, 0x82a664, 0xafd193, 0xe4f2d5] },
+        { name: '热力熔岩', colors: [0x000000, 0x2d0a05, 0x5a1208, 0x8a1d0d, 0xbd2e15, 0xe04a2d, 0xf08060, 0xffd0b0] },
+        { name: '深海极光', colors: [0x020617, 0x0a1435, 0x152b6b, 0x1e4bb5, 0x2dd4bf, 0x5eead4, 0x99f6e4, 0xf0fdfa] },
+        { name: '数字赛博', colors: [0x09090b, 0x1e1b4b, 0x312e81, 0x4338ca, 0x6366f1, 0x818cf8, 0xa5b4fc, 0xe0e7ff] },
+        { name: '赤色戈壁', colors: [0x270b02, 0x441507, 0x78350f, 0x92400e, 0xb45309, 0xd97706, 0xf59e0b, 0xfef3c7] },
+        { name: '复古胶片', colors: [0x1c1917, 0x44403c, 0x78716c, 0xa8a29e, 0xd6d3d1, 0xe7e5e4, 0xf5f5f4, 0xffffff] },
+        { name: '极地冬日', colors: [0x0f172a, 0x1e293b, 0x334155, 0x475569, 0x64748b, 0x94a3b8, 0xcbd5e1, 0xf8fafc] },
+        { name: '热带丛林', colors: [0x064e3b, 0x065f46, 0x047857, 0x059669, 0x10b981, 0x34d399, 0x6ee7b7, 0xecfdf5] },
+        { name: '沙漠黄昏', colors: [0x1a0a00, 0x3d1a00, 0x6b2c00, 0x9a4400, 0xc46200, 0xe68a00, 0xf5b800, 0xfff0d0] },
+        { name: '海洋深蓝', colors: [0x000814, 0x001a33, 0x002d5c, 0x004488, 0x0060aa, 0x0080cc, 0x00a0e6, 0x00c8ff] },
+        { name: '樱花粉黛', colors: [0x2d1f1f, 0x4a2c3a, 0x7a4a5a, 0xa86a7a, 0xd68a9a, 0xf0aab0, 0xfad0d6, 0xfff0f5] },
+        { name: '秋日枫叶', colors: [0x1a0500, 0x3d0a00, 0x781400, 0xb91c1c, 0xdc2626, 0xef4444, 0xf87171, 0xfecaca] },
+        { name: '翡翠森林', colors: [0x022c22, 0x047857, 0x059669, 0x10b981, 0x34d399, 0x6ee7b7, 0xa7f3d0, 0xd1fae5] },
+        { name: '紫色星云', colors: [0x1e1b4b, 0x312e81, 0x4338ca, 0x6366f1, 0x818cf8, 0xa5b4fc, 0xc7d2fe, 0xe0e7ff] },
+        { name: '青铜时代', colors: [0x1c1917, 0x44403c, 0x78716c, 0xa8a29e, 0xd6d3d1, 0xb45309, 0xd97706, 0xfcd34d] },
+        { name: '水墨丹青', colors: [0x000000, 0x1f2937, 0x374151, 0x4b5563, 0x6b7280, 0x9ca3af, 0xd1d5db, 0xf3f4f6] }
+    ];
+
+    let currentPalette = paletteData[0].colors;
+    let isSmoothMode = false;
+
+    init();
+    renderPaletteList();
+    createDefaultTerrain();
+    
+    setTimeout(() => {
+        const dateStr = document.getElementById('date-input').value;
+        const latitude = parseFloat(document.getElementById('latitude').value);
+        if (dateStr) {
+            const times = calculateSunriseSunset(latitude, dateStr);
+            document.getElementById('sunrise-time').innerText = `日出: ${times.sunrise || '--:--'}`;
+            document.getElementById('sunset-time').innerText = `日落: ${times.sunset || '--:--'}`;
+        }
+    }, 100);
+    
+    animate();
+
+    function init() {
+        scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x09090b);
+
+        camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 5000);
+        camera.position.set(220, 220, 220);
+
+        renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.shadowMap.enabled = true;
+        document.body.appendChild(renderer.domElement);
+
+        controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+
+        // 创建raycaster用于点击检测
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+        
+        // 点击标记点组
+        const markerGroup = new THREE.Group();
+        scene.add(markerGroup);
+        window.markerGroup = markerGroup;
+        
+        // 工具模式：marker, line, area, none
+        window.currentToolMode = 'none';
+        window.measurePoints = [];
+        window.measureLines = [];
+        window.measureAreas = [];
+        
+        // 切换工具模式
+        window.setToolMode = (mode) => {
+            window.currentToolMode = mode;
+            window.measurePoints = [];
+            
+            // 更新按钮状态
+            document.querySelectorAll('.toolbar-btn').forEach(btn => btn.classList.remove('active'));
+            if (mode !== 'none') {
+                document.getElementById('tool-' + mode).classList.add('active');
+            }
+            
+            // 清除旧的测量线和区域
+            clearMeasurements();
+            
+            // 更新信息显示
+            const infoEl = document.getElementById('measure-info');
+            if (mode === 'marker') {
+                infoEl.innerText = '点击标记高程';
+            } else if (mode === 'line') {
+                infoEl.innerText = '点击两点测量距离';
+            } else if (mode === 'area') {
+                infoEl.innerText = '点击多点测量面积';
+            } else {
+                infoEl.innerText = '选择工具开始测量';
+            }
+        };
+        
+        // 清除测量
+        function clearMeasurements() {
+            window.measureLines.forEach(line => {
+                if (line.geometry) line.geometry.dispose();
+                if (line.material) line.material.dispose();
+                if (line.parent) line.parent.remove(line);
+            });
+            window.measureAreas.forEach(area => {
+                if (area.geometry) area.geometry.dispose();
+                if (area.material) area.material.dispose();
+                if (area.parent) area.parent.remove(area);
+            });
+            window.measureLines = [];
+            window.measureAreas = [];
+        }
+        
+        // 添加点击事件监听器
+        renderer.domElement.addEventListener('click', (event) => {
+            // 如果没有选择工具，不执行任何操作
+            if (window.currentToolMode === 'none') {
+                return;
+            }
+            
+            // 计算鼠标位置（归一化设备坐标）
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+            
+            // 从相机发射射线
+            raycaster.setFromCamera(mouse, camera);
+            
+            // 检测与地形的交点
+            if (terrain) {
+                const intersects = raycaster.intersectObject(terrain);
+                
+                if (intersects.length > 0) {
+                    const intersect = intersects[0];
+                    const point = intersect.point;
+                    const uv = intersect.uv;
+                    
+                    // 根据UV坐标计算在heightData中的位置
+                    const x = Math.floor(uv.x * (rawWidth - 1));
+                    const y = Math.floor((1 - uv.y) * (rawHeight - 1));
+                    const grayValue = heightData[y * rawWidth + x];
+                    
+                    // 计算实际高程值
+                    const elevationRange = (window.demInfo && window.demInfo.elevationRange) ? window.demInfo.elevationRange : 50;
+                    const minElevation = (window.demInfo && window.demInfo.min) ? window.demInfo.min : 0;
+                    const actualElevation = minElevation + (grayValue / 255) * elevationRange;
+                    
+                    if (window.currentToolMode === 'marker') {
+                        // 标记高程模式
+                        const markerGeometry = new THREE.SphereGeometry(2, 16, 16);
+                        const markerMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+                        const marker = new THREE.Mesh(markerGeometry, markerMaterial);
+                        marker.position.copy(point);
+                        markerGroup.add(marker);
+                        
+                        const label = createElevationLabel(actualElevation.toFixed(1) + 'm', point);
+                        markerGroup.add(label);
+                    } else if (window.currentToolMode === 'line') {
+                        // 测量长度模式
+                        window.measurePoints.push(point);
+                        
+                        if (window.measurePoints.length === 2) {
+                            const p1 = window.measurePoints[0];
+                            const p2 = window.measurePoints[1];
+                            const distance = p1.distanceTo(p2);
+                            
+                            // 创建测量线
+                            const lineGeometry = new THREE.BufferGeometry().setFromPoints([p1, p2]);
+                            const lineMaterial = new THREE.LineBasicMaterial({ color: 0x00ff00, linewidth: 2 });
+                            const line = new THREE.Line(lineGeometry, lineMaterial);
+                            scene.add(line);
+                            window.measureLines.push(line);
+                            
+                            // 更新信息显示
+                            document.getElementById('measure-info').innerText = `距离: ${distance.toFixed(2)}m`;
+                            
+                            window.measurePoints = [];
+                        }
+                    } else if (window.currentToolMode === 'area') {
+                        // 测量面积模式
+                        window.measurePoints.push(point);
+                        
+                        // 创建测量点标记
+                        const markerGeometry = new THREE.SphereGeometry(1, 8, 8);
+                        const markerMaterial = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
+                        const marker = new THREE.Mesh(markerGeometry, markerMaterial);
+                        marker.position.copy(point);
+                        markerGroup.add(marker);
+                        
+                        if (window.measurePoints.length >= 3) {
+                            // 计算多边形面积（投影到XZ平面）
+                            const points = window.measurePoints.map(p => new THREE.Vector2(p.x, p.z));
+                            const area = calculatePolygonArea(points);
+                            
+                            // 创建多边形
+                            const shape = new THREE.Shape();
+                            shape.moveTo(points[0].x, points[0].y);
+                            for (let i = 1; i < points.length; i++) {
+                                shape.lineTo(points[i].x, points[i].y);
+                            }
+                            shape.lineTo(points[0].x, points[0].y);
+                            
+                            const geometry = new THREE.ShapeGeometry(shape);
+                            const material = new THREE.MeshBasicMaterial({ 
+                                color: 0x00ff00, 
+                                transparent: true, 
+                                opacity: 0.3,
+                                side: THREE.DoubleSide
+                            });
+                            const mesh = new THREE.Mesh(geometry, material);
+                            mesh.rotation.x = -Math.PI / 2;
+                            mesh.position.y = point.y + 0.1;
+                            scene.add(mesh);
+                            window.measureAreas.push(mesh);
+                            
+                            // 更新信息显示
+                            document.getElementById('measure-info').innerText = `面积: ${area.toFixed(2)}m²`;
+                            
+                            window.measurePoints = [];
+                        }
+                    }
+                }
+            }
+        });
+        
+        // 计算多边形面积（使用鞋带公式）
+        function calculatePolygonArea(points) {
+            let area = 0;
+            const n = points.length;
+            for (let i = 0; i < n; i++) {
+                const j = (i + 1) % n;
+                area += points[i].x * points[j].y;
+                area -= points[j].x * points[i].y;
+            }
+            return Math.abs(area) / 2;
+        }
+        
+        // 清除标记按钮
+        window.clearMarkers = () => {
+            while(markerGroup.children.length > 0) {
+                const child = markerGroup.children[0];
+                if (child.geometry) child.geometry.dispose();
+                if (child.material) child.material.dispose();
+                markerGroup.remove(child);
+            }
+        };
+
+        ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+        scene.add(ambientLight);
+        
+        sunLight = new THREE.DirectionalLight(0xffffff, 0.9);
+        updateSunPosition(45, 45);
+        sunLight.castShadow = true;
+        scene.add(sunLight);
+
+        document.getElementById('detail-scale').addEventListener('input', function() {
+            document.getElementById('detail-val').innerText = this.value;
+            updateDetail();
+        });
+        document.getElementById('height-scale').addEventListener('input', updateHeight);
+        document.getElementById('render-mode-toggle').addEventListener('change', function() {
+            isSmoothMode = this.checked;
+            document.getElementById('render-mode-label').innerText = isSmoothMode ? '过渡色' : '分层设色';
+            updateUniforms();
+        });
+        document.getElementById('contour-toggle').addEventListener('change', function() {
+            updateUniforms();
+            updateContourLabels();
+        });
+        document.getElementById('contour-spacing').addEventListener('input', function() {
+            const sliderValue = parseFloat(this.value);
+            const actualSpacing = calculateActualContourSpacing(sliderValue);
+            document.getElementById('contour-spacing-val').innerText = actualSpacing.toFixed(1);
+            updateUniforms();
+            updateContourLabels();
+        });
+        document.getElementById('contour-width').addEventListener('input', function() {
+            document.getElementById('contour-width-val').innerText = this.value;
+            updateUniforms();
+        });
+        document.getElementById('contour-labels-toggle').addEventListener('change', function() {
+            updateContourLabels();
+        });
+        document.getElementById('remove-palette-toggle').addEventListener('change', updateUniforms);
+        document.getElementById('texture-opacity').addEventListener('input', function() {
+            document.getElementById('texture-opacity-val').innerText = this.value + '%';
+            updateUniforms();
+        });
+        document.getElementById('base-color').addEventListener('input', updateUniforms);
+        document.getElementById('contour-color').addEventListener('input', updateUniforms);
+        document.getElementById('apply-custom-palette').addEventListener('click', applyCustomPalette);
+        document.getElementById('wireframe-toggle').addEventListener('click', function() {
+            this.classList.toggle('active');
+            if(material) material.wireframe = this.classList.contains('active');
+        });
+        
+        document.getElementById('ambient-intensity').addEventListener('input', function() {
+            ambientLight.intensity = parseFloat(this.value);
+            document.getElementById('ambient-val').innerText = this.value;
+        });
+        document.getElementById('sun-intensity').addEventListener('input', function() {
+            sunLight.intensity = parseFloat(this.value);
+            document.getElementById('sun-val').innerText = this.value;
+        });
+        document.getElementById('sun-elevation').addEventListener('input', function() {
+            const elevation = parseInt(this.value);
+            const azimuth = parseInt(document.getElementById('sun-azimuth').value);
+            updateSunPosition(elevation, azimuth);
+            document.getElementById('sun-elevation-val').innerText = elevation + '°';
+        });
+        document.getElementById('sun-azimuth').addEventListener('input', function() {
+            const azimuth = parseInt(this.value);
+            const elevation = parseInt(document.getElementById('sun-elevation').value);
+            updateSunPosition(elevation, azimuth);
+            document.getElementById('sun-azimuth-val').innerText = azimuth + '°';
+        });
+        document.getElementById('latitude').addEventListener('input', function() {
+            document.getElementById('latitude-val').innerText = parseFloat(this.value).toFixed(1) + '°';
+        });
+        document.getElementById('date-input').addEventListener('change', function() {
+            document.getElementById('date-val').innerText = this.value;
+        });
+        document.getElementById('auto-locate').addEventListener('click', autoGetLocation);
+        document.getElementById('auto-date').addEventListener('click', autoGetDate);
+        document.getElementById('calc-sun').addEventListener('click', calculateSunPosition);
+        document.getElementById('time-slider').addEventListener('input', function() {
+            const timeMinutes = parseInt(this.value);
+            const latitude = parseFloat(document.getElementById('latitude').value);
+            const dateStr = document.getElementById('date-input').value;
+            
+            const hours = Math.floor(timeMinutes / 60);
+            const minutes = timeMinutes % 60;
+            document.getElementById('time-val').innerText = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+            
+            if (dateStr) {
+                const sunPos = calculateSunPositionByTime(timeMinutes, latitude, dateStr);
+                document.getElementById('sun-elevation').value = sunPos.elevation.toFixed(0);
+                document.getElementById('sun-elevation-val').innerText = sunPos.elevation.toFixed(0) + '°';
+                document.getElementById('sun-azimuth').value = sunPos.azimuth.toFixed(0);
+                document.getElementById('sun-azimuth-val').innerText = sunPos.azimuth.toFixed(0) + '°';
+                updateSunPosition(sunPos.elevation, sunPos.azimuth);
+            }
+        });
+        document.getElementById('latitude').addEventListener('change', function() {
+            const latitude = parseFloat(this.value);
+            const dateStr = document.getElementById('date-input').value;
+            const timeMinutes = parseInt(document.getElementById('time-slider').value);
+            
+            if (dateStr) {
+                const times = calculateSunriseSunset(latitude, dateStr);
+                document.getElementById('sunrise-time').innerText = `日出: ${times.sunrise || '--:--'}`;
+                document.getElementById('sunset-time').innerText = `日落: ${times.sunset || '--:--'}`;
+                
+                const sunPos = calculateSunPositionByTime(timeMinutes, latitude, dateStr);
+                document.getElementById('sun-elevation').value = sunPos.elevation.toFixed(0);
+                document.getElementById('sun-elevation-val').innerText = sunPos.elevation.toFixed(0) + '°';
+                document.getElementById('sun-azimuth').value = sunPos.azimuth.toFixed(0);
+                document.getElementById('sun-azimuth-val').innerText = sunPos.azimuth.toFixed(0) + '°';
+                updateSunPosition(sunPos.elevation, sunPos.azimuth);
+            }
+        });
+        document.getElementById('date-input').addEventListener('change', function() {
+            const dateStr = this.value;
+            const latitude = parseFloat(document.getElementById('latitude').value);
+            const timeMinutes = parseInt(document.getElementById('time-slider').value);
+            
+            document.getElementById('date-val').innerText = dateStr;
+            
+            if (dateStr) {
+                const times = calculateSunriseSunset(latitude, dateStr);
+                document.getElementById('sunrise-time').innerText = `日出: ${times.sunrise || '--:--'}`;
+                document.getElementById('sunset-time').innerText = `日落: ${times.sunset || '--:--'}`;
+                
+                const sunPos = calculateSunPositionByTime(timeMinutes, latitude, dateStr);
+                document.getElementById('sun-elevation').value = sunPos.elevation.toFixed(0);
+                document.getElementById('sun-elevation-val').innerText = sunPos.elevation.toFixed(0) + '°';
+                document.getElementById('sun-azimuth').value = sunPos.azimuth.toFixed(0);
+                document.getElementById('sun-azimuth-val').innerText = sunPos.azimuth.toFixed(0) + '°';
+                updateSunPosition(sunPos.elevation, sunPos.azimuth);
+            }
+        });
+
+        document.getElementById('heightmap-input').addEventListener('change', (e) => handleFileUpload(e, 'height'));
+        document.getElementById('texture-input').addEventListener('change', (e) => handleFileUpload(e, 'texture'));
+        document.getElementById('remove-texture').addEventListener('click', removeTexture);
+        // 生成随机地形
+        document.getElementById('generate-random-terrain').addEventListener('click', generateRandomTerrain);
+
+        // ZIP文件导入
+        document.getElementById('zip-input').addEventListener('change', handleZipImport);
+        // 文件夹导入
+        document.getElementById('folder-input').addEventListener('change', handleFolderImport);
+        // DEM数据文件导入
+        document.getElementById('dem-txt-input').addEventListener('change', handleDemTxtImport);
+        // 导出功能
+        document.getElementById('export-contours').addEventListener('click', exportContours);
+        document.getElementById('export-hypsometric').addEventListener('click', exportHypsometric);
+        
+        // 工具条按钮事件
+        document.getElementById('tool-marker').addEventListener('click', () => setToolMode('marker'));
+        document.getElementById('tool-line').addEventListener('click', () => setToolMode('line'));
+        document.getElementById('tool-area').addEventListener('click', () => setToolMode('area'));
+        document.getElementById('tool-clear').addEventListener('click', () => {
+            if (window.clearMarkers) {
+                window.clearMarkers();
+            }
+        });
+        
+        // 工具条拖拽和折叠功能
+        const toolbar = document.getElementById('toolbar');
+        const toggleBtn = document.getElementById('toolbar-toggle-btn');
+        let isDragging = false;
+        let dragOffsetX = 0;
+        let dragOffsetY = 0;
+        let isCollapsed = false;
+        
+        // 拖拽功能
+        toolbar.addEventListener('mousedown', (e) => {
+            if (e.target === toggleBtn || toggleBtn.contains(e.target)) return;
+            isDragging = true;
+            dragOffsetX = e.clientX - toolbar.offsetLeft;
+            dragOffsetY = e.clientY - toolbar.offsetTop;
+            toolbar.style.cursor = 'grabbing';
+        });
+        
+        document.addEventListener('mousemove', (e) => {
+            if (!isDragging) return;
+            const newX = e.clientX - dragOffsetX;
+            const newY = e.clientY - dragOffsetY;
+            toolbar.style.left = newX + 'px';
+            toolbar.style.top = newY + 'px';
+            toolbar.style.transform = 'none';
+        });
+        
+        document.addEventListener('mouseup', () => {
+            isDragging = false;
+            toolbar.style.cursor = 'move';
+        });
+        
+        // 折叠功能
+        toggleBtn.addEventListener('click', () => {
+            isCollapsed = !isCollapsed;
+            toolbar.classList.toggle('collapsed', isCollapsed);
+            toggleBtn.innerText = isCollapsed ? '🔧' : '🔧';
+        });
+
+        window.addEventListener('resize', onWindowResize);
+    }
+
+    function updateSunPosition(elevationDegrees, azimuthDegrees) {
+        const radius = 300;
+        const elevationRad = (elevationDegrees * Math.PI) / 180;
+        const azimuthRad = (azimuthDegrees * Math.PI) / 180;
+        
+        const x = radius * Math.cos(elevationRad) * Math.sin(azimuthRad);
+        const y = radius * Math.sin(elevationRad);
+        const z = radius * Math.cos(elevationRad) * Math.cos(azimuthRad);
+        
+        sunLight.position.set(x, y, z);
+    }
+
+    function togglePanel(id) {
+        const p = document.getElementById(id);
+        p.classList.toggle('collapsed');
+        p.querySelector('.fold-icon').innerText = p.classList.contains('collapsed') ? '▲' : '▼';
+    }
+
+    function renderPaletteList() {
+        const container = document.getElementById('palette-list');
+        paletteData.forEach((p, idx) => {
+            const card = document.createElement('div');
+            card.className = `palette-card ${idx === 0 ? 'active' : ''}`;
+            card.onclick = () => {
+                document.querySelectorAll('.palette-card').forEach(c => c.classList.remove('active'));
+                card.classList.add('active');
+                currentPalette = p.colors;
+                updateUniforms();
+            };
+
+            const label = document.createElement('div');
+            label.className = 'text-[10px] text-zinc-400 font-medium px-0.5';
+            label.innerText = p.name;
+
+            const row = document.createElement('div');
+            row.className = 'swatch-row';
+            p.colors.forEach(hex => {
+                const s = document.createElement('div');
+                s.className = 'swatch-item';
+                s.style.backgroundColor = `#${hex.toString(16).padStart(6, '0')}`;
+                row.appendChild(s);
+            });
+
+            card.appendChild(label);
+            card.appendChild(row);
+            container.appendChild(card);
+        });
+    }
+
+    function createDefaultTerrain() {
+        const size = 256;
+        const canvas = document.createElement('canvas');
+        canvas.width = size; canvas.height = size;
+        const ctx = canvas.getContext('2d');
+        const img = ctx.createImageData(size, size);
+        for (let i = 0; i < img.data.length; i += 4) {
+            let x = (i/4)%size, y = Math.floor((i/4)/size);
+            let val = (Math.sin(x/15)*Math.cos(y/12) + Math.sin(Math.sqrt(x*x+y*y)/10)*0.5 + 1.2) * 80;
+            img.data[i] = img.data[i+1] = img.data[i+2] = Math.max(0, Math.min(255, val));
+            img.data[i+3] = 255;
+        }
+        ctx.putImageData(img, 0, 0);
+        // 初始生成地形时渲染精度设为90
+        document.getElementById('detail-scale').value = 90;
+        document.getElementById('detail-val').innerText = '90';
+        buildTerrain(canvas);
+    }
+
+    function handleFileUpload(e, type) {
+        const file = e.target.files[0];
+        if (!file) return;
+        
+        const fileName = file.name.toLowerCase();
+        const isGeoTIFF = fileName.endsWith('.tif') || fileName.endsWith('.tiff') || fileName.endsWith('.geotiff');
+        
+        if (isGeoTIFF && type === 'height') {
+            const reader = new FileReader();
+            reader.onload = async (ev) => {
+                try {
+                    const arrayBuffer = ev.target.result;
+                    const tiff = await parseGeotiff(arrayBuffer);
+                    if (tiff) {
+                        // 导入GeoTIFF时渲染精度设为360
+                        document.getElementById('detail-scale').value = 360;
+                        document.getElementById('detail-val').innerText = '360';
+                        buildTerrainFromGeotiff(tiff);
+                    } else {
+                        alert('无法解析 GeoTIFF 文件');
+                    }
+                } catch (error) {
+                    console.error('GeoTIFF 解析错误:', error);
+                    alert('GeoTIFF 文件解析失败：' + error.message);
+                }
+            };
+            reader.readAsArrayBuffer(file);
+            return;
+        }
+        
+        const reader = new FileReader();
+        reader.onload = ev => {
+            const img = new Image();
+            img.onload = () => {
+                const canvas = document.createElement('canvas');
+                canvas.width = img.width; canvas.height = img.height;
+                canvas.getContext('2d').drawImage(img, 0, 0);
+                if(type === 'height') {
+                    // 导入高度图时渲染精度设为360
+                    document.getElementById('detail-scale').value = 360;
+                    document.getElementById('detail-val').innerText = '360';
+                    buildTerrain(canvas);
+                }
+                else {
+                    customTexture = new THREE.CanvasTexture(canvas);
+                    customTexture.colorSpace = THREE.SRGBColorSpace;
+                    customTexture.minFilter = THREE.LinearFilter;
+                    customTexture.magFilter = THREE.LinearFilter;
+                    customTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+                    document.getElementById('remove-texture').classList.remove('hidden');
+                    if(material && terrain) { 
+                        material.map = customTexture; 
+                        material.needsUpdate = true;
+                        material.onBeforeCompile = getShaderCompileFunction();
+                        updateUniforms(); 
+                    } else if (terrain) {
+                        rebuildMaterial();
+                    }
+                }
+            };
+            img.src = ev.target.result;
+        };
+        reader.readAsDataURL(file);
+    }
+
+    async function parseGeotiff(arrayBuffer) {
+        if (typeof GeoTIFF !== 'undefined') {
+            console.warn('GeoTIFF 库未加载，尝试使用基本解析');
+            return parseBasicTiff(arrayBuffer);
+        }
+        
+        try {
+            const tiff = await GeoTIFF.from(arrayBuffer);
+            return tiff;
+        } catch (error) {
+            console.error('GeoTIFF 解析错误:', error);
+            throw error;
+        }
+    }
+
+    function parseBasicTiff(arrayBuffer) {
+        const dataView = new DataView(arrayBuffer);
+        let offset = 0;
+        
+        const readString = (offset, length) => {
+            let result = '';
+            for (let i = 0; i < length; i++) {
+                result += String.fromCharCode(dataView.getUint8(offset + i));
+            }
+            return result;
+        };
+        
+        const readUint16 = (offset, littleEndian) => {
+            return littleEndian ? dataView.getUint16(offset, true) : dataView.getUint16(offset, false);
+        };
+        
+        const readUint32 = (offset, littleEndian) => {
+            return littleEndian ? dataView.getUint32(offset, true) : dataView.getUint32(offset, false);
+        };
+        
+        const ifdOffset = readUint32(4, true);
+        const tiffMagic = readUint16(0, true);
+        
+        if (tiffMagic !== 42) {
+            throw new Error('不是有效的 TIFF 文件');
+        }
+        
+        const numEntries = readUint16(ifdOffset, true);
+        let width = 0, height = 0, bitsPerSample = 0, samplesPerPixel = 0;
+        let dataOffset = 0;
+        
+        for (let i = 0; i < numEntries; i++) {
+            const entryOffset = ifdOffset + 2 + i * 12;
+            const tag = readUint16(entryOffset, true);
+            const type = readUint16(entryOffset + 2, true);
+            const count = readUint32(entryOffset + 4, true);
+            const valueOffset = readUint32(entryOffset + 8, true);
+            
+            if (tag === 256) {
+                width = readUint32(valueOffset, true);
+            } else if (tag === 257) {
+                height = readUint32(valueOffset, true);
+            } else if (tag === 258) {
+                bitsPerSample = readUint16(valueOffset, true);
+            } else if (tag === 277) {
+                samplesPerPixel = readUint16(valueOffset, true);
+            } else if (tag === 273) {
+                dataOffset = readUint32(valueOffset, true);
+            }
+        }
+        
+        if (width === 0 || height === 0) {
+            throw new Error('无法读取图像尺寸');
+        }
+        
+        const bytesPerSample = bitsPerSample / 8;
+        const pixelData = new Uint8Array(arrayBuffer, dataOffset, width * height * bytesPerSample * samplesPerPixel);
+        
+        return {
+            width: width,
+            height: height,
+            data: pixelData,
+            bitsPerSample: bitsPerSample
+        };
+    }
+
+    function buildTerrainFromGeotiff(tiff) {
+        const width = tiff.width;
+        const height = tiff.height;
+        const data = tiff.data;
+        
+        rawWidth = width;
+        rawHeight = height;
+        
+        let heightData;
+        
+        if (tiff.bitsPerSample === 16) {
+            heightData = new Float32Array(width * height);
+            for (let i = 0; i < width * height; i++) {
+                const value = (data[i * 2] << 8) | data[i * 2 + 1];
+                heightData[i] = value;
+            }
+        } else if (tiff.bitsPerSample === 8) {
+            heightData = new Float32Array(width * height);
+            for (let i = 0; i < width * height; i++) {
+                heightData[i] = data[i];
+            }
+        } else {
+            alert('不支持的位深度：' + tiff.bitsPerSample);
+            return;
+        }
+
+        if(terrain) { scene.remove(terrain); geometry.dispose(); material.dispose(); }
+
+        const segs = parseInt(document.getElementById('detail-scale').value);
+        const aspectRatio = rawWidth / rawHeight;
+        const terrainWidth = 200 * Math.sqrt(aspectRatio);
+        const terrainHeight = 200 / Math.sqrt(aspectRatio);
+        geometry = new THREE.PlaneBufferGeometry(terrainWidth, terrainHeight, segs, segs);
+        geometry.rotateX(-Math.PI/2);
+
+        const pos = geometry.attributes.position.array;
+        const heightScale = parseFloat(document.getElementById('height-scale').value);
+        const isSmooth = document.getElementById('render-mode-toggle').checked;
+        const scaleMultiplier = isSmooth ? 0.5 : 0.3;
+        let maxHeight = 0;
+        
+        const normalizeHeight = (value) => {
+            const minVal = Math.min(...heightData);
+            const maxVal = Math.max(...heightData);
+            return (value - minVal) / (maxVal - minVal) * 255;
+        };
+        
+        for(let i=0, j=0; i<pos.length; i+=3, j++) {
+            const x = Math.floor((j % (segs + 1)) / segs * (rawWidth - 1));
+            const y = Math.floor(Math.floor(j / (segs + 1)) / segs * (rawHeight - 1));
+            const idx = y * rawWidth + x;
+            pos[i+1] = heightData[idx] * scaleMultiplier * heightScale;
+            if(pos[i+1] > maxHeight) maxHeight = pos[i+1];
+        }
+        geometry.computeVertexNormals();
+
+        material = new THREE.MeshStandardMaterial({ roughness: 0.8, metalness: 0.1 });
+        if(customTexture) material.map = customTexture;
+        
+        const maxHeightForShader = maxHeight || 76.5;
+        material.onBeforeCompile = getShaderCompileFunction(maxHeightForShader);
+
+        terrain = new THREE.Mesh(geometry, material);
+        terrain.receiveShadow = terrain.castShadow = true;
+        scene.add(terrain);
+        updateUniforms();
+    }
+
+    function removeTexture() {
+        customTexture = null;
+        document.getElementById('remove-texture').classList.add('hidden');
+        
+        // 清除文件输入，允许再次导入相同文件
+        document.getElementById('texture-input').value = '';
+        
+        if(material) {
+            material.map = null;
+            material.needsUpdate = true;
+        }
+        
+        // 如果"去除配色"被勾选，取消勾选并恢复配色
+        const removePaletteToggle = document.getElementById('remove-palette-toggle');
+        if(removePaletteToggle.checked) {
+            removePaletteToggle.checked = false;
+        }
+        
+        updateUniforms();
+    }
+
+    // 生成随机地形
+    function generateRandomTerrain() {
+        // 清除导入的DEM数据
+        window.demInfo = null;
+        
+        // 清除DEM信息显示
+        const displayEl = document.getElementById('dem-info-display');
+        if (displayEl) {
+            displayEl.innerHTML = '';
+            displayEl.classList.add('hidden');
+        }
+        
+        // 恢复等高线和等高距到初始状态
+        document.getElementById('contour-toggle').checked = false;
+        document.getElementById('contour-spacing').value = 20;
+        document.getElementById('contour-spacing-val').innerText = '20.0';
+        document.getElementById('contour-width').value = 1;
+        document.getElementById('contour-width-val').innerText = '1.0';
+        
+        // 自动去除纹理
+        customTexture = null;
+        document.getElementById('remove-texture').classList.add('hidden');
+        document.getElementById('texture-input').value = '';
+        if(material) {
+            material.map = null;
+            material.needsUpdate = true;
+        }
+        
+        const size = 512;
+        const canvas = document.createElement('canvas');
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext('2d');
+        const img = ctx.createImageData(size, size);
+        
+        // 随机种子
+        const seed = Math.random() * 1000;
+        
+        // 噪声函数
+        function noise(x, y, s) {
+            return Math.sin(x * 12.9898 + y * 78.233 + s) * 43758.5453 % 1;
+        }
+        
+        // 平滑噪声
+        function smoothNoise(x, y, s) {
+            const ix = Math.floor(x);
+            const iy = Math.floor(y);
+            const fx = x - ix;
+            const fy = y - iy;
+            
+            const v1 = noise(ix, iy, s);
+            const v2 = noise(ix + 1, iy, s);
+            const v3 = noise(ix, iy + 1, s);
+            const v4 = noise(ix + 1, iy + 1, s);
+            
+            const sx = fx * fx * (3 - 2 * fx);
+            const sy = fy * fy * (3 - 2 * fy);
+            
+            return v1 + (v2 - v1) * sx + (v3 - v1) * sy + (v4 - v3 - v2 + v1) * sx * sy;
+        }
+        
+        // 分形噪声
+        function fbm(x, y, octaves, s) {
+            let value = 0;
+            let amp = 0.5;
+            let freq = 1;
+            for(let i = 0; i < octaves; i++) {
+                value += smoothNoise(x * freq, y * freq, s + i * 10) * amp;
+                amp *= 0.5;
+                freq *= 2;
+            }
+            return value;
+        }
+        
+        // 生成地形
+        for(let i = 0; i < img.data.length; i += 4) {
+            const x = (i / 4) % size;
+            const y = Math.floor((i / 4) / size);
+            const nx = x / size;
+            const ny = y / size;
+            
+            // 基础地形
+            let val = fbm(nx * 4, ny * 4, 4, seed) * 0.5;
+            
+            // 中等细节
+            val += fbm(nx * 8, ny * 8, 3, seed + 1) * 0.25;
+            
+            // 细节
+            val += fbm(nx * 16, ny * 16, 2, seed + 2) * 0.125;
+            
+            // 山脊效果
+            const ridge = Math.abs(fbm(nx * 6, ny * 6, 3, seed + 3) - 0.5) * 2;
+            val += (1 - ridge) * (1 - ridge) * 0.3;
+            
+            // 归一化到0-255
+            val = (val + 0.2) * 200;
+            val = Math.max(0, Math.min(255, val));
+            
+            img.data[i] = img.data[i+1] = img.data[i+2] = val;
+            img.data[i+3] = 255;
+        }
+        
+        ctx.putImageData(img, 0, 0);
+        // 生成随机地形时渲染精度设为90
+        document.getElementById('detail-scale').value = 90;
+        document.getElementById('detail-val').innerText = '90';
+        buildTerrain(canvas);
+        
+        // 更新DEM信息显示
+        rawWidth = size;
+        rawHeight = size;
+        heightData = new Float32Array(size * size);
+        for(let i = 0; i < img.data.length; i += 4) {
+            heightData[i / 4] = img.data[i];
+        }
+        
+        // 计算高程范围
+        let minH = 255, maxH = 0;
+        for(let i = 0; i < heightData.length; i++) {
+            minH = Math.min(minH, heightData[i]);
+            maxH = Math.max(maxH, heightData[i]);
+        }
+        minElevation = minH;
+        maxElevation = maxH;
+        displayDemInfo(minElevation, maxElevation);
+        
+        showImportStatus('随机地形生成成功');
+    }
+
+    // 显示导入状态
+    function showImportStatus(message, isError = false) {
+        const statusEl = document.getElementById('import-status');
+        statusEl.innerText = message;
+        statusEl.className = isError ? 'text-[10px] text-red-400' : 'text-[10px] text-green-400';
+        statusEl.classList.remove('hidden');
+        setTimeout(() => statusEl.classList.add('hidden'), 5000);
+    }
+
+    // 从文件列表中查找匹配的文件
+    function findFilesInList(files) {
+        const result = {
+            demPng: null,
+            demTxt: null,
+            satPng: null
+        };
+
+        for (const file of files) {
+            const name = file.name.toLowerCase();
+            // 优先匹配包含 dem.png 的文件作为高度图
+            if (name.includes('dem.png')) {
+                result.demPng = file;
+            } else if (name.includes('dem.txt')) {
+                result.demTxt = file;
+            } else if (name.includes('sat.png')) {
+                result.satPng = file;
+            }
+        }
+
+        return result;
+    }
+
+    // 处理导入的文件
+    async function processImportedFiles(files) {
+        const { demPng, demTxt, satPng } = findFilesInList(files);
+        
+        let loadedCount = 0;
+        let messages = [];
+        
+        // 导入数据时渲染精度设为360
+        if (demPng || demTxt) {
+            document.getElementById('detail-scale').value = 360;
+            document.getElementById('detail-val').innerText = '360';
+        }
+        
+        // 加载高度图 (dem.png)
+        if (demPng) {
+            try {
+                const url = URL.createObjectURL(demPng);
+                const img = new Image();
+                img.onload = () => {
+                    const canvas = document.createElement('canvas');
+                    canvas.width = img.width;
+                    canvas.height = img.height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0);
+                    buildTerrain(canvas);
+                    URL.revokeObjectURL(url);
+                };
+                img.src = url;
+                loadedCount++;
+                messages.push('高度图');
+            } catch (err) {
+                console.error('加载高度图失败:', err);
+            }
+        }
+        
+        // 加载纹理图 (sat.png)
+        if (satPng) {
+            try {
+                const url = URL.createObjectURL(satPng);
+                const loader = new THREE.TextureLoader();
+                loader.load(url, (tex) => {
+                    tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+                    customTexture = tex;
+                    rebuildMaterial();
+                    document.getElementById('remove-texture').classList.remove('hidden');
+                    URL.revokeObjectURL(url);
+                });
+                loadedCount++;
+                messages.push('纹理图');
+            } catch (err) {
+                console.error('加载纹理图失败:', err);
+            }
+        }
+        
+        // 加载高度数据 (dem.txt)
+        if (demTxt) {
+            try {
+                const text = await demTxt.text();
+                // 解析DEM统计信息
+                const info = parseDemTxtContent(text);
+                window.demInfo = info;
+                displayDemInfo(info);
+                loadedCount++;
+                messages.push('高度数据');
+                
+                // 如果已经加载了高度图，重新计算最佳等高距
+                if (heightData && terrain) {
+                    const pos = geometry.attributes.position.array;
+                    let maxHeight = 0;
+                    let minHeight = Infinity;
+                    for(let i=1; i<pos.length; i+=3) {
+                        if(pos[i] > maxHeight) maxHeight = pos[i];
+                        if(pos[i] < minHeight) minHeight = pos[i];
+                    }
+                    autoCalculateBestContourSpacing(minHeight, maxHeight);
+                }
+            } catch (err) {
+                console.error('加载高度数据失败:', err);
+            }
+        }
+        
+        if (loadedCount > 0) {
+            showImportStatus(`成功导入: ${messages.join(', ')}`);
+        } else {
+            // 无合格数据时弹出对话框
+            alert('无合格数据\n\n未找到以下文件：\n• 高度图：文件名需包含 "dem.png"\n• 纹理图：文件名需包含 "sat.png"\n• DEM数据：文件名需包含 "dem.txt"\n\n请确保ZIP文件或文件夹中包含上述文件。');
+            showImportStatus('未找到匹配的文件', true);
+        }
+
+        return { demPng, demTxt, satPng };
+    }
+
+    // 处理ZIP文件导入
+    async function handleZipImport(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+        
+        try {
+            showImportStatus('正在解析ZIP文件...');
+            const zip = await JSZip.loadAsync(file);
+            const files = [];
+            
+            // 提取所有文件
+            const promises = [];
+            zip.forEach((relativePath, zipEntry) => {
+                if (!zipEntry.dir) {
+                    promises.push(
+                        zipEntry.async('blob').then(blob => {
+                            return new File([blob], zipEntry.name, { type: blob.type });
+                        })
+                    );
+                }
+            });
+            
+            const extractedFiles = await Promise.all(promises);
+            await processImportedFiles(extractedFiles);
+        } catch (err) {
+            console.error('ZIP解析失败:', err);
+            showImportStatus('ZIP文件解析失败', true);
+        }
+        
+        // 清除输入，允许再次导入相同文件
+        e.target.value = '';
+    }
+
+    // 处理文件夹导入
+    async function handleFolderImport(e) {
+        const files = Array.from(e.target.files);
+        if (files.length === 0) return;
+        
+        await processImportedFiles(files);
+        
+        // 清除输入，允许再次导入相同文件
+        e.target.value = '';
+    }
+
+    // 解析DEM文本文件，提取高度信息
+    function parseDemTxtContent(text) {
+        const info = {
+            north: null,
+            south: null,
+            east: null,
+            west: null,
+            width: null,
+            height: null,
+            max: null,
+            min: null,
+            elevationRange: null
+        };
+        
+        const lines = text.split('\n');
+        
+        for (const line of lines) {
+            const trimmed = line.trim();
+            
+            // 匹配坐标信息
+            if (trimmed.includes('北纬') || trimmed.includes('North')) {
+                const match = trimmed.match(/[\d.]+/);
+                if (match) info.north = parseFloat(match[0]);
+            }
+            if (trimmed.includes('南纬') || trimmed.includes('South')) {
+                const match = trimmed.match(/[\d.]+/);
+                if (match) info.south = parseFloat(match[0]);
+            }
+            if (trimmed.includes('东经') || trimmed.includes('East')) {
+                const match = trimmed.match(/[\d.]+/);
+                if (match) info.east = parseFloat(match[0]);
+            }
+            if (trimmed.includes('西经') || trimmed.includes('West')) {
+                const match = trimmed.match(/[\d.]+/);
+                if (match) info.west = parseFloat(match[0]);
+            }
+            
+            // 匹配图像尺寸
+            if (trimmed.includes('图像尺寸') || trimmed.includes('尺寸')) {
+                const match = trimmed.match(/(\d+)\s*x\s*(\d+)/i);
+                if (match) {
+                    info.width = parseInt(match[1]);
+                    info.height = parseInt(match[2]);
+                }
+            }
+            
+            // 匹配最高点
+            if (trimmed.includes('最高点') || trimmed.includes('Max')) {
+                const match = trimmed.match(/[\d.]+/);
+                if (match) info.max = parseFloat(match[0]);
+            }
+            
+            // 匹配最低点
+            if (trimmed.includes('最低点') || trimmed.includes('Min')) {
+                const match = trimmed.match(/[\d.]+/);
+                if (match) info.min = parseFloat(match[0]);
+            }
+            
+            // 匹配高差
+            if (trimmed.includes('高差') || trimmed.includes('Range')) {
+                const match = trimmed.match(/[\d.]+/);
+                if (match) info.elevationRange = parseFloat(match[0]);
+            }
+        }
+        
+        // 如果没有高差但有最大最小值，计算高差
+        if (!info.elevationRange && info.max !== null && info.min !== null) {
+            info.elevationRange = info.max - info.min;
+        }
+        
+        return info;
+    }
+
+    // 显示DEM信息
+    function displayDemInfo(info) {
+        const displayEl = document.getElementById('dem-info-display');
+        if (!displayEl) return;
+
+        let html = '<div class="font-bold text-orange-400 mb-1">DEM数据信息</div>';
+
+        if (info.max !== null) {
+            html += `<div class="text-orange-300">最高点: ${info.max.toFixed(2)}m</div>`;
+        }
+        if (info.min !== null) {
+            html += `<div class="text-orange-300">最低点: ${info.min.toFixed(2)}m</div>`;
+        }
+        if (info.elevationRange !== null) {
+            html += `<div class="text-orange-300">高差: ${info.elevationRange.toFixed(2)}m</div>`;
+        }
+        if (info.width && info.height) {
+            html += `<div class="text-orange-300">尺寸: ${info.width} x ${info.height}</div>`;
+        }
+        if (info.north !== null && info.south !== null && info.east !== null && info.west !== null) {
+            html += `<div class="mt-1 text-orange-500">坐标范围:</div>`;
+            html += `<div class="text-orange-300">N:${info.north.toFixed(4)} S:${info.south.toFixed(4)}</div>`;
+            html += `<div class="text-orange-300">E:${info.east.toFixed(4)} W:${info.west.toFixed(4)}</div>`;
+        }
+
+        displayEl.innerHTML = html;
+        displayEl.classList.remove('hidden');
+    }
+
+    // 处理DEM txt文件导入
+    async function handleDemTxtImport(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+        
+        try {
+            const text = await file.text();
+            const info = parseDemTxtContent(text);
+            
+            // 存储到全局变量供后续使用
+            window.demInfo = info;
+            
+            // 显示信息
+            displayDemInfo(info);
+            
+            // 显示成功消息
+            let msg = '已导入DEM数据';
+            if (info.max !== null && info.min !== null) {
+                msg += `: 高程 ${info.min.toFixed(0)}m ~ ${info.max.toFixed(0)}m`;
+            }
+            showImportStatus(msg);
+            
+            console.log('DEM信息:', info);
+        } catch (err) {
+            console.error('解析DEM文件失败:', err);
+            showImportStatus('DEM文件解析失败', true);
+        }
+        
+        // 清除输入，允许再次导入
+        e.target.value = '';
+    }
+
+    function buildTerrain(canvas) {
+        rawWidth = canvas.width; rawHeight = canvas.height;
+        const data = canvas.getContext('2d').getImageData(0, 0, rawWidth, rawHeight).data;
+        heightData = new Float32Array(rawWidth * rawHeight);
+        for(let i=0; i<data.length; i+=4) heightData[i/4] = data[i];
+
+        if(terrain) { scene.remove(terrain); geometry.dispose(); material.dispose(); }
+
+        const segs = parseInt(document.getElementById('detail-scale').value);
+        const aspectRatio = rawWidth / rawHeight;
+        const terrainWidth = 200 * Math.sqrt(aspectRatio);
+        const terrainHeight = 200 / Math.sqrt(aspectRatio);
+        geometry = new THREE.PlaneBufferGeometry(terrainWidth, terrainHeight, segs, segs);
+        geometry.rotateX(-Math.PI/2);
+
+        const pos = geometry.attributes.position.array;
+        const heightScale = parseFloat(document.getElementById('height-scale').value);
+        const isSmooth = document.getElementById('render-mode-toggle').checked;
+        const scaleMultiplier = isSmooth ? 0.5 : 0.3;
+        let maxHeight = 0;
+        let minHeight = Infinity;
+        for(let i=0, j=0; i<pos.length; i+=3, j++) {
+            const x = Math.floor((j % (segs + 1)) / segs * (rawWidth - 1));
+            const y = Math.floor(Math.floor(j / (segs + 1)) / segs * (rawHeight - 1));
+            const heightValue = heightData[y * rawWidth + x] * scaleMultiplier * heightScale;
+            pos[i+1] = heightValue;
+            if(pos[i+1] > maxHeight) maxHeight = pos[i+1];
+            if(pos[i+1] < minHeight) minHeight = pos[i+1];
+        }
+        geometry.computeVertexNormals();
+
+        // 自动计算最佳等高距
+        autoCalculateBestContourSpacing(minHeight, maxHeight);
+
+        material = new THREE.MeshStandardMaterial({ roughness: 0.8, metalness: 0.1 });
+        if(customTexture) material.map = customTexture;
+        
+        const maxHeightForShader = maxHeight || 76.5;
+        
+        material.onBeforeCompile = (shader) => {
+            shader.uniforms.uPalette = { value: currentPalette.map(c => new THREE.Color(c)) };
+            shader.uniforms.uSmooth = { value: isSmoothMode ? 1.0 : 0.0 };
+            shader.uniforms.uShowContour = { value: 0.0 };
+            shader.uniforms.uRemovePalette = { value: 0.0 };
+            shader.uniforms.uContourSpacing = { value: 10.0 };
+            shader.uniforms.uContourWidth = { value: 1.0 };
+            shader.uniforms.uBaseColor = { value: new THREE.Color(0x808080) };
+            shader.uniforms.uContourColor = { value: new THREE.Color(0xffffff) }
+            
+            material.userData.shader = shader;
+
+            shader.vertexShader = `
+                varying float vHeight;
+                ${shader.vertexShader}
+            `.replace('#include <begin_vertex>', 
+                `#include <begin_vertex>
+                vHeight = position.y / ${maxHeightForShader.toFixed(2)};`
+            );
+
+            shader.fragmentShader = `
+                uniform vec3 uPalette[8];
+                uniform float uSmooth;
+                uniform float uShowContour;
+                uniform float uRemovePalette;
+                uniform float uContourSpacing;
+                uniform float uContourWidth;
+                uniform vec3 uBaseColor;
+                uniform vec3 uContourColor;
+                varying float vHeight;
+                ${shader.fragmentShader}
+            `.replace('#include <map_fragment>', `
+                float h = clamp(vHeight, 0.0, 0.999);
+                vec3 finalColor;
+
+                if(uRemovePalette > 0.5) {
+                    finalColor = uBaseColor;
+                } else if(uSmooth > 0.5) {
+                    float fIdx = h * 7.0;
+                    int idx = int(floor(fIdx));
+                    float t = fract(fIdx);
+                    finalColor = mix(uPalette[idx], uPalette[idx+1], t);
+                } else {
+                    float fIdx = h * 8.0;
+                    float idx = floor(fIdx);
+                    float edge = smoothstep(0.96, 1.0, fract(fIdx));
+                    vec3 c1 = uPalette[int(idx)];
+                    vec3 c2 = uPalette[int(min(idx + 1.0, 7.0))];
+                    finalColor = mix(c1, c2, edge * 0.1); 
+                }
+
+                diffuseColor.rgb = finalColor;
+
+                #ifdef USE_MAP
+                    diffuseColor.rgb = mix(diffuseColor.rgb, texture2D(map, vUv).rgb, 0.4);
+                #endif
+
+                if(uShowContour > 0.5) {
+                    // 等高距越大，等高线越稀疏（间距越大）
+                    float contourFreq = 50.0 / uContourSpacing;
+                    float lineWidth = uContourWidth * 0.5;
+                    float line = abs(fract(vHeight * contourFreq - 0.5) - 0.5) / fwidth(vHeight * contourFreq);
+                    diffuseColor.rgb = mix(diffuseColor.rgb, uContourColor, (1.0 - smoothstep(0.0, lineWidth, line)) * 0.5);
+                }
+            `);
+        };
+
+        terrain = new THREE.Mesh(geometry, material);
+        terrain.receiveShadow = terrain.castShadow = true;
+        scene.add(terrain);
+        updateUniforms();
+    }
+
+    function getShaderCompileFunction(maxHeightForShader) {
+        const maxH = maxHeightForShader || 76.5;
+        return function(shader) {
+            shader.uniforms.uPalette = { value: currentPalette.map(c => new THREE.Color(c)) };
+            shader.uniforms.uSmooth = { value: isSmoothMode ? 1.0 : 0.0 };
+            shader.uniforms.uShowContour = { value: 0.0 };
+            shader.uniforms.uRemovePalette = { value: 0.0 };
+            shader.uniforms.uContourSpacing = { value: 10.0 };
+            shader.uniforms.uContourWidth = { value: 1.0 };
+            shader.uniforms.uTextureOpacity = { value: 0.8 };
+            shader.uniforms.uBaseColor = { value: new THREE.Color(0x808080) };
+            shader.uniforms.uContourColor = { value: new THREE.Color(0xffffff) };
+            
+            material.userData.shader = shader;
+
+            shader.vertexShader = `
+                varying float vHeight;
+                ${shader.vertexShader}
+            `.replace('#include <begin_vertex>', 
+                `#include <begin_vertex>
+                vHeight = position.y / ${maxH.toFixed(2)};`
+            );
+
+            shader.fragmentShader = `
+                uniform vec3 uPalette[8];
+                uniform float uSmooth;
+                uniform float uShowContour;
+                uniform float uRemovePalette;
+                uniform float uContourSpacing;
+                uniform float uContourWidth;
+                uniform float uTextureOpacity;
+                uniform vec3 uBaseColor;
+                uniform vec3 uContourColor;
+                varying float vHeight;
+                ${shader.fragmentShader}
+            `.replace('#include <map_fragment>', `
+                float h = clamp(vHeight, 0.0, 0.999);
+                vec3 finalColor;
+
+                if(uRemovePalette > 0.5) {
+                    finalColor = uBaseColor;
+                } else if(uSmooth > 0.5) {
+                    float fIdx = h * 7.0;
+                    int idx = int(floor(fIdx));
+                    float t = fract(fIdx);
+                    finalColor = mix(uPalette[idx], uPalette[idx+1], t);
+                } else {
+                    float fIdx = h * 8.0;
+                    float idx = floor(fIdx);
+                    float edge = smoothstep(0.96, 1.0, fract(fIdx));
+                    vec3 c1 = uPalette[int(idx)];
+                    vec3 c2 = uPalette[int(min(idx + 1.0, 7.0))];
+                    finalColor = mix(c1, c2, edge * 0.1); 
+                }
+
+                diffuseColor.rgb = finalColor;
+
+                #ifdef USE_MAP
+                    vec4 texColor = texture2D(map, vUv);
+                    diffuseColor.rgb = mix(diffuseColor.rgb, texColor.rgb, uTextureOpacity * texColor.a);
+                #endif
+
+                if(uShowContour > 0.5) {
+                    // 等高距越大，等高线越稀疏（间距越大）
+                    float contourFreq = 50.0 / uContourSpacing;
+                    float lineWidth = uContourWidth * 0.5;
+                    float line = abs(fract(vHeight * contourFreq - 0.5) - 0.5) / fwidth(vHeight * contourFreq);
+                    diffuseColor.rgb = mix(diffuseColor.rgb, uContourColor, (1.0 - smoothstep(0.0, lineWidth, line)) * 0.5);
+                }
+            `);
+        };
+    }
+
+    function rebuildMaterial() {
+        if(!terrain) return;
+        
+        const maxHeight = terrain.geometry.attributes.position.array.reduce((max, val, idx) => {
+            return idx % 3 === 1 ? Math.max(max, val) : max;
+        }, 0);
+        
+        material = new THREE.MeshStandardMaterial({ 
+            roughness: 0.8, 
+            metalness: 0.1,
+            map: customTexture
+        });
+        
+        material.onBeforeCompile = getShaderCompileFunction(maxHeight);
+        terrain.material = material;
+        material.needsUpdate = true;
+        updateUniforms();
+    }
+
+    function updateUniforms() {
+        if(!material || !material.userData.shader) return;
+        const shader = material.userData.shader;
+        shader.uniforms.uPalette.value = currentPalette.map(c => new THREE.Color(c));
+        shader.uniforms.uSmooth.value = isSmoothMode ? 1.0 : 0.0;
+        shader.uniforms.uShowContour.value = document.getElementById('contour-toggle').checked ? 1.0 : 0.0;
+        shader.uniforms.uRemovePalette.value = document.getElementById('remove-palette-toggle').checked ? 1.0 : 0.0;
+        shader.uniforms.uContourSpacing.value = parseFloat(document.getElementById('contour-spacing').value);
+        shader.uniforms.uContourWidth.value = parseFloat(document.getElementById('contour-width').value);
+        if(shader.uniforms.uTextureOpacity) {
+            shader.uniforms.uTextureOpacity.value = parseFloat(document.getElementById('texture-opacity').value) / 100;
+        }
+        if(shader.uniforms.uBaseColor) {
+            shader.uniforms.uBaseColor.value.set(document.getElementById('base-color').value);
+        }
+        if(shader.uniforms.uContourColor) {
+            shader.uniforms.uContourColor.value.set(document.getElementById('contour-color').value);
+        }
+    }
+
+    // 自动计算最佳等高距
+    function autoCalculateBestContourSpacing(minHeight, maxHeight) {
+        const diff = maxHeight - minHeight;
+        if (diff <= 0) return;
+        
+        // 计算理想的等高距（约12条等高线）
+        let ideal = diff / 12;
+        
+        // 计算数量级
+        const magnitude = Math.pow(10, Math.floor(Math.log10(ideal)));
+        const res = ideal / magnitude;
+        
+        // 根据比例选择合适的步长
+        let step;
+        if (res < 1.5) {
+            step = 1 * magnitude;
+        } else if (res < 3.5) {
+            step = 2 * magnitude;
+        } else if (res < 7.5) {
+            step = 5 * magnitude;
+        } else {
+            step = 10 * magnitude;
+        }
+        
+        // 转换为滑块值（考虑DEM高差）
+        const elevationRange = (window.demInfo && window.demInfo.elevationRange) ? window.demInfo.elevationRange : 50;
+        const x = Math.round(elevationRange / 50);
+        const sliderValue = step / x;
+        
+        // 更新UI
+        document.getElementById('contour-spacing').value = sliderValue;
+        document.getElementById('contour-spacing-val').innerText = sliderValue.toFixed(1);
+        
+        // 更新uniforms
+        updateUniforms();
+    }
+
+    // 计算实际等高距（考虑导入的DEM高差）
+    function calculateActualContourSpacing(sliderValue) {
+        // 获取导入的DEM高差，如果没有则使用默认值50
+        const elevationRange = (window.demInfo && window.demInfo.elevationRange) ? window.demInfo.elevationRange : 50;
+        const x = Math.round(elevationRange / 50);
+        return sliderValue * x;
+    }
+
+    // 计算实际等高线高程值（考虑导入的DEM高差和最低高程）
+    function calculateActualContourLevel(contourLevel) {
+        const elevationRange = (window.demInfo && window.demInfo.elevationRange) ? window.demInfo.elevationRange : 50;
+        const minElevation = (window.demInfo && window.demInfo.min) ? window.demInfo.min : 0;
+        const x = Math.round(elevationRange / 50);
+        return contourLevel * x + minElevation;
+    }
+
+    // 创建高程标签
+    function createElevationLabel(text, position) {
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = 128;
+        canvas.height = 48;
+        
+        // 背景
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        // 边框
+        ctx.strokeStyle = '#ff0000';
+        ctx.lineWidth = 3;
+        ctx.strokeRect(2, 2, canvas.width - 4, canvas.height - 4);
+        
+        // 文字
+        ctx.font = 'bold 24px Arial';
+        ctx.fillStyle = '#000000';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(text, canvas.width / 2, canvas.height / 2);
+        
+        const texture = new THREE.CanvasTexture(canvas);
+        const material = new THREE.SpriteMaterial({ map: texture, transparent: true });
+        const sprite = new THREE.Sprite(material);
+        sprite.position.copy(position);
+        sprite.position.y += 5;
+        sprite.scale.set(15, 5.6, 1);
+        
+        return sprite;
+    }
+
+    function createTextSprite(text, position, scale = 5) {
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = 128;
+        canvas.height = 64;
+        
+        // 背景
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        // 文字
+        ctx.font = 'bold 32px Arial';
+        ctx.fillStyle = 'white';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(text, canvas.width / 2, canvas.height / 2);
+        
+        // 边框
+        ctx.strokeStyle = 'white';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(2, 2, canvas.width - 4, canvas.height - 4);
+        
+        const texture = new THREE.CanvasTexture(canvas);
+        const material = new THREE.SpriteMaterial({ map: texture, transparent: true });
+        const sprite = new THREE.Sprite(material);
+        sprite.position.copy(position);
+        sprite.scale.set(scale * 2, scale, 1);
+        
+        return sprite;
+    }
+
+    function updateContourLabels() {
+        // 清除旧的等高线标签
+        if(contourLabelsGroup) {
+            scene.remove(contourLabelsGroup);
+            contourLabelsGroup = null;
+        }
+
+        const showLabels = document.getElementById('contour-labels-toggle').checked;
+        const showContours = document.getElementById('contour-toggle').checked;
+
+        if(!showLabels || !showContours || !terrain || !heightData) return;
+
+        contourLabelsGroup = new THREE.Group();
+
+        const sliderValue = parseFloat(document.getElementById('contour-spacing').value);
+        const actualContourSpacing = calculateActualContourSpacing(sliderValue);
+        const segs = parseInt(document.getElementById('detail-scale').value);
+        const pos = terrain.geometry.attributes.position.array;
+
+        // 计算地形的高度范围
+        let minHeight = Infinity, maxHeight = -Infinity;
+        for(let i = 1; i < pos.length; i += 3) {
+            minHeight = Math.min(minHeight, pos[i]);
+            maxHeight = Math.max(maxHeight, pos[i]);
+        }
+
+        // 计算等高线层级（使用实际等高距）
+        const firstContour = Math.ceil(minHeight / actualContourSpacing) * actualContourSpacing;
+        const lastContour = Math.floor(maxHeight / actualContourSpacing) * actualContourSpacing;
+
+        // 创建网格高度数组（用于等高线追踪）
+        const grid = [];
+        for(let y = 0; y <= segs; y++) {
+            grid[y] = [];
+            for(let x = 0; x <= segs; x++) {
+                const idx = y * (segs + 1) + x;
+                grid[y][x] = pos[idx * 3 + 1];
+            }
+        }
+
+        // 为每个等高线层级生成标签
+        const addedLabels = new Set();
+        const minLabelDistance = Math.max(5, segs * 0.5); // 最小标签间距（减小以放置更多标签）
+
+        for(let level = firstContour; level <= lastContour; level += actualContourSpacing) {
+            // 追踪该层级的等高线路径
+            const paths = generateContourPathsForLabels(level, segs, grid, pos);
+
+            // 在每条等高线路径上放置标签
+            paths.forEach(path => {
+                if(path.length < 3) return; // 太短的线不放置标签
+
+                // 计算路径上各点的累积距离
+                const cumulativeDistances = [0];
+                for(let i = 1; i < path.length; i++) {
+                    const dx = path[i].x - path[i-1].x;
+                    const dy = path[i].y - path[i-1].y;
+                    cumulativeDistances.push(cumulativeDistances[i-1] + Math.sqrt(dx * dx + dy * dy));
+                }
+                const totalLength = cumulativeDistances[cumulativeDistances.length - 1];
+
+                // 根据路径长度决定放置多少个标签（每条等高线至少放一个标签）
+                const numLabels = Math.max(1, Math.min(3, Math.floor(totalLength / minLabelDistance)));
+                const labelSpacing = totalLength / numLabels;
+
+                // 在路径上均匀放置多个标签
+                for(let labelIdx = 0; labelIdx < numLabels; labelIdx++) {
+                    const targetDist = labelSpacing * (labelIdx + 0.5);
+
+                    // 找到最接近目标距离的点
+                    let bestIdx = 0;
+                    let bestDiff = Math.abs(cumulativeDistances[0] - targetDist);
+                    for(let i = 1; i < cumulativeDistances.length; i++) {
+                        const diff = Math.abs(cumulativeDistances[i] - targetDist);
+                        if(diff < bestDiff) {
+                            bestDiff = diff;
+                            bestIdx = i;
+                        }
+                    }
+
+                    const point = path[bestIdx];
+
+                    // 检查与已有标签的距离（只检查同一层级的标签，避免同一等高线上标签重叠）
+                    let tooClose = false;
+                    for(const label of addedLabels) {
+                        // 只检查同一层级的标签
+                        if(label.level !== level) continue;
+                        const dx = label.x - point.x;
+                        const dy = label.y - point.y;
+                        const dist = Math.sqrt(dx * dx + dy * dy);
+                        if(dist < minLabelDistance) {
+                            tooClose = true;
+                            break;
+                        }
+                    }
+
+                    if(!tooClose) {
+                        addedLabels.add({x: point.x, y: point.y, level: level});
+
+                        const worldX = point.worldX;
+                        const worldZ = point.worldZ;
+                        const worldY = point.worldY + 2; // 稍微抬高避免遮挡
+
+                        // 计算实际显示的高程值
+                        const actualLevel = calculateActualContourLevel(level);
+                        const label = createTextSprite(actualLevel.toFixed(0) + 'm',
+                            new THREE.Vector3(worldX, worldY, worldZ),
+                            4);
+                        contourLabelsGroup.add(label);
+                    }
+                }
+            });
+        }
+
+        if(contourLabelsGroup.children.length > 0) {
+            scene.add(contourLabelsGroup);
+        }
+    }
+
+    // 为标签生成等高线路径（改进版，使用网格追踪）
+    function generateContourPathsForLabels(targetLevel, segs, grid, pos) {
+        const paths = [];
+        const visited = new Set();
+
+        // 遍历网格查找等高线起点
+        for(let y = 0; y < segs; y++) {
+            for(let x = 0; x < segs; x++) {
+                const key = `${x},${y}`;
+                if(visited.has(key)) continue;
+
+                const h1 = grid[y][x];
+                const h2 = grid[y][x+1];
+                const h3 = grid[y+1][x];
+                const h4 = grid[y+1][x+1];
+
+                // 检查是否跨越等高线（检查四条边）
+                const crosses = (h1 <= targetLevel && h2 >= targetLevel) || (h1 >= targetLevel && h2 <= targetLevel) || // 上边
+                               (h2 <= targetLevel && h4 >= targetLevel) || (h2 >= targetLevel && h4 <= targetLevel) || // 右边
+                               (h4 <= targetLevel && h3 >= targetLevel) || (h4 >= targetLevel && h3 <= targetLevel) || // 下边
+                               (h3 <= targetLevel && h1 >= targetLevel) || (h3 >= targetLevel && h1 <= targetLevel);   // 左边
+
+                if(crosses) {
+                    const path = traceContourPath(targetLevel, x, y, segs, grid, pos, visited);
+                    if(path.length > 5) { // 只保留足够长的路径
+                        paths.push(path);
+                    }
+                }
+            }
+        }
+
+        // 如果没有找到任何路径，尝试在整个网格中搜索
+        if(paths.length === 0) {
+            // 尝试从边界开始追踪
+            for(let y = 0; y < segs; y++) {
+                for(let x = 0; x < segs; x++) {
+                    const h1 = grid[y][x];
+                    const h2 = grid[y][x+1];
+                    const h3 = grid[y+1][x];
+                    const h4 = grid[y+1][x+1];
+
+                    // 检查是否跨越等高线
+                    const crosses = (h1 <= targetLevel && h2 >= targetLevel) || (h1 >= targetLevel && h2 <= targetLevel) ||
+                                   (h2 <= targetLevel && h4 >= targetLevel) || (h2 >= targetLevel && h4 <= targetLevel) ||
+                                   (h4 <= targetLevel && h3 >= targetLevel) || (h4 >= targetLevel && h3 <= targetLevel) ||
+                                   (h3 <= targetLevel && h1 >= targetLevel) || (h3 >= targetLevel && h1 <= targetLevel);
+
+                    if(crosses) {
+                        const localVisited = new Set();
+                        const path = traceContourPath(targetLevel, x, y, segs, grid, pos, localVisited);
+                        if(path.length > 5) {
+                            paths.push(path);
+                            // 将访问过的单元格添加到全局visited
+                            localVisited.forEach(k => visited.add(k));
+                        }
+                    }
+                }
+            }
+        }
+
+        return paths;
+    }
+
+    // 追踪单条等高线路径（改进版Marching Squares）
+    function traceContourPath(targetLevel, startX, startY, segs, grid, pos, visited) {
+        const path = [];
+        let x = startX, y = startY;
+        let maxSteps = segs * 4;
+        let steps = 0;
+        let prevEdge = -1; // 记录上一条边，避免来回震荡
+
+        while(steps < maxSteps) {
+            const key = `${x},${y}`;
+            if(visited.has(key)) break;
+            visited.add(key);
+
+            // 在当前单元格中找到等高线交点
+            const h1 = grid[y][x];
+            const h2 = grid[y][x+1];
+            const h3 = grid[y+1][x];
+            const h4 = grid[y+1][x+1];
+
+            // 计算四条边上的交点
+            const intersections = [];
+
+            // 上边 (y=0)
+            if((h1 <= targetLevel && h2 >= targetLevel) || (h1 >= targetLevel && h2 <= targetLevel)) {
+                const t = (targetLevel - h1) / (h2 - h1);
+                intersections.push({px: x + t, py: y, edge: 0, nx: 0, ny: -1});
+            }
+            // 右边 (x=1)
+            if((h2 <= targetLevel && h4 >= targetLevel) || (h2 >= targetLevel && h4 <= targetLevel)) {
+                const t = (targetLevel - h2) / (h4 - h2);
+                intersections.push({px: x + 1, py: y + t, edge: 1, nx: 1, ny: 0});
+            }
+            // 下边 (y=1)
+            if((h4 <= targetLevel && h3 >= targetLevel) || (h4 >= targetLevel && h3 <= targetLevel)) {
+                const t = (targetLevel - h4) / (h3 - h4);
+                intersections.push({px: x + 1 - t, py: y + 1, edge: 2, nx: 0, ny: 1});
+            }
+            // 左边 (x=0)
+            if((h3 <= targetLevel && h1 >= targetLevel) || (h3 >= targetLevel && h1 <= targetLevel)) {
+                const t = (targetLevel - h3) / (h1 - h3);
+                intersections.push({px: x, py: y + 1 - t, edge: 3, nx: -1, ny: 0});
+            }
+
+            if(intersections.length < 2) break;
+
+            // 选择正确的交点（避免来回震荡）
+            let selectedIntersection;
+            if(intersections.length === 2) {
+                // 如果只有两个交点，选择不是上一条边的那个
+                if(intersections[0].edge === prevEdge) {
+                    selectedIntersection = intersections[1];
+                } else {
+                    selectedIntersection = intersections[0];
+                }
+            } else {
+                // 多个交点时，选择第一个不是上一条边的
+                selectedIntersection = intersections.find(i => i.edge !== prevEdge) || intersections[0];
+            }
+
+            const {px, py, edge, nx, ny} = selectedIntersection;
+            prevEdge = (edge + 2) % 4; // 记录对边，下次不会选回来
+
+            // 转换为世界坐标
+            const gridX = Math.min(Math.max(Math.round(px), 0), segs);
+            const gridY = Math.min(Math.max(Math.round(py), 0), segs);
+            const idx = gridY * (segs + 1) + gridX;
+            const posIdx = idx * 3;
+
+            path.push({
+                x: px,
+                y: py,
+                worldX: pos[posIdx],
+                worldY: pos[posIdx + 1],
+                worldZ: pos[posIdx + 2]
+            });
+
+            // 移动到下一个单元格
+            const nextX = x + nx;
+            const nextY = y + ny;
+
+            if(nextX < 0 || nextX >= segs || nextY < 0 || nextY >= segs) break;
+
+            x = nextX;
+            y = nextY;
+            steps++;
+        }
+
+        return path;
+    }
+
+    // 恢复导出设置
+    function restoreExportSettings(detailScale, baseColor, contourColor, heightScale, contourWidth, contourSpacing, 
+        contourToggle, contourLabelsToggle, removePaletteToggle) {
+        document.getElementById('detail-scale').value = detailScale;
+        document.getElementById('base-color').value = baseColor;
+        document.getElementById('contour-color').value = contourColor;
+        document.getElementById('height-scale').value = heightScale;
+        document.getElementById('contour-width').value = contourWidth;
+        document.getElementById('contour-spacing').value = contourSpacing;
+        document.getElementById('contour-toggle').checked = contourToggle;
+        document.getElementById('contour-labels-toggle').checked = contourLabelsToggle;
+        document.getElementById('remove-palette-toggle').checked = removePaletteToggle;
+        
+        // 更新显示值
+        document.getElementById('detail-val').innerText = detailScale;
+        document.getElementById('contour-width-val').innerText = contourWidth;
+        document.getElementById('contour-spacing-val').innerText = contourSpacing;
+        
+        // 只更新uniforms和高度，不重新构建地形
+        updateUniforms();
+        if(terrain) {
+            terrain.scale.y = heightScale;
+        }
+    }
+
+    // 导出全部（SVG、PNG、DEM）
+    async function exportAll() {
+        if(!heightData) {
+            alert('请先导入高度图');
+            return;
+        }
+
+        showImportStatus('正在导出...');
+
+        const zip = new JSZip();
+        const timestamp = new Date().getTime();
+
+        // 保存当前设置
+        const originalBaseColor = document.getElementById('base-color').value;
+        const originalContourColor = document.getElementById('contour-color').value;
+        const originalDetailScale = document.getElementById('detail-scale').value;
+        const originalHeightScale = document.getElementById('height-scale').value;
+        const originalContourWidth = document.getElementById('contour-width').value;
+        const originalContourSpacing = document.getElementById('contour-spacing').value;
+        const originalContourToggle = document.getElementById('contour-toggle').checked;
+        const originalContourLabelsToggle = document.getElementById('contour-labels-toggle').checked;
+        const originalRemovePaletteToggle = document.getElementById('remove-palette-toggle').checked;
+
+        // 自动设置导出参数
+        document.getElementById('detail-scale').value = 90;
+        document.getElementById('base-color').value = '#ffffff';
+        document.getElementById('contour-color').value = '#000000';
+        document.getElementById('height-scale').value = 0;
+        document.getElementById('contour-width').value = 3;
+        document.getElementById('contour-spacing').value = 10;
+        document.getElementById('contour-toggle').checked = true;
+        document.getElementById('contour-labels-toggle').checked = true;
+        document.getElementById('remove-palette-toggle').checked = true;
+        
+        // 更新显示值
+        document.getElementById('detail-val').innerText = '90';
+        document.getElementById('contour-width-val').innerText = '3.0';
+        document.getElementById('contour-spacing-val').innerText = '10.0';
+        
+        updateDetail();
+        updateUniforms();
+        updateHeight();
+
+        // 1. 生成SVG
+        const svgContent = await generateSvgContent();
+        zip.file('contour.svg', svgContent);
+
+        // 2. 生成PNG
+        const pngDataUrl = await generatePngContent();
+        const pngBase64 = pngDataUrl.split(',')[1];
+        zip.file('contour.png', pngBase64, { base64: true });
+
+        // 3. 生成DEM
+        const demDataUrl = generateDemContent();
+        const demBase64 = demDataUrl.split(',')[1];
+        zip.file('dem.png', demBase64, { base64: true });
+
+        // 4. 生成ZIP并下载
+        const content = await zip.generateAsync({ type: 'blob' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(content);
+        link.download = `dem_${timestamp}.zip`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(link.href);
+
+        showImportStatus('导出完成！');
+
+        // 恢复原始设置
+        restoreExportSettings(originalDetailScale, originalBaseColor, originalContourColor, originalHeightScale, 
+            originalContourWidth, originalContourSpacing, originalContourToggle, originalContourLabelsToggle, originalRemovePaletteToggle);
+    }
+
+    // 生成SVG内容
+    function generateSvgContent() {
+        return new Promise((resolve) => {
+            const sliderValue = parseFloat(document.getElementById('contour-spacing').value);
+            const actualContourSpacing = calculateActualContourSpacing(sliderValue);
+
+            const gridWidth = rawWidth;
+            const gridHeight = rawHeight;
+
+            let minHeight = Infinity, maxHeight = -Infinity;
+            for(let i = 0; i < heightData.length; i++) {
+                minHeight = Math.min(minHeight, heightData[i]);
+                maxHeight = Math.max(maxHeight, heightData[i]);
+            }
+
+            const canvasWidth = 1600;
+            const canvasHeight = Math.round(canvasWidth * (gridHeight / gridWidth));
+
+            const firstContour = Math.ceil(minHeight / actualContourSpacing) * actualContourSpacing;
+            const lastContour = Math.floor(maxHeight / actualContourSpacing) * actualContourSpacing;
+
+            const contourLevels = [];
+            for(let level = firstContour; level <= lastContour; level += actualContourSpacing) {
+                contourLevels.push(level);
+            }
+
+            let svgContent = `<?xml version="1.0" encoding="UTF-8"?>\n`;
+            svgContent += `<svg xmlns="http://www.w3.org/2000/svg" width="${canvasWidth}" height="${canvasHeight}" viewBox="0 0 ${canvasWidth} ${canvasHeight}">\n`;
+            svgContent += `  <defs>\n`;
+            svgContent += `    <style>\n`;
+            svgContent += `      .contour-line { fill: none; stroke: #000; stroke-width: 0.8; }\n`;
+            svgContent += `      .contour-label { font-family: Arial, sans-serif; font-size: 10px; fill: #000; }\n`;
+            svgContent += `      .background { fill: #ffffff; }\n`;
+            svgContent += `    </style>\n`;
+            svgContent += `  </defs>\n`;
+            svgContent += `  <rect class="background" width="100%" height="100%"/>\n`;
+
+            contourLevels.forEach((level, index) => {
+                const paths = generateContourPathsFromHeightData(level, gridWidth, gridHeight, heightData, canvasWidth, canvasHeight);
+                if(paths.length > 0) {
+                    svgContent += `  <!-- 等高线 ${level.toFixed(1)}m -->\n`;
+                    paths.forEach(path => {
+                        svgContent += `  <path class="contour-line" d="${path.d}"/>\n`;
+                    });
+                }
+            });
+
+            const addedLabels = new Set();
+            const labelSpacing = Math.max(1, Math.floor(gridWidth / 20));
+
+            contourLevels.forEach(level => {
+                for(let y = 0; y < gridHeight; y += labelSpacing) {
+                    for(let x = 0; x < gridWidth; x += labelSpacing) {
+                        const idx = y * gridWidth + x;
+                        const h = heightData[idx];
+
+                        const contourLevel = Math.round(h / actualContourSpacing) * actualContourSpacing;
+                        const distance = Math.abs(h - contourLevel);
+
+                        if(distance < actualContourSpacing * 0.15 && contourLevel === level) {
+                            const labelKey = `${contourLevel.toFixed(1)}_${Math.floor(x/labelSpacing)}_${Math.floor(y/labelSpacing)}`;
+                            if(!addedLabels.has(labelKey)) {
+                                addedLabels.add(labelKey);
+
+                                const svgX = (x / gridWidth) * canvasWidth;
+                                const svgY = canvasHeight - (y / gridHeight) * canvasHeight;
+
+                                const actualLevel = calculateActualContourLevel(contourLevel);
+                                svgContent += `  <text class="contour-label" x="${svgX.toFixed(1)}" y="${svgY.toFixed(1)}" text-anchor="middle" dominant-baseline="middle">${actualLevel.toFixed(0)}m</text>\n`;
+                            }
+                        }
+                    }
+                }
+            });
+
+            svgContent += `</svg>\n`;
+            resolve(svgContent);
+        });
+    }
+
+    // 生成PNG内容
+    function generatePngContent() {
+        return new Promise((resolve) => {
+            const originalCameraPosition = camera.position.clone();
+            const originalCameraRotation = camera.rotation.clone();
+            const originalControlsTarget = controls.target.clone();
+            const originalRendererSize = renderer.getSize(new THREE.Vector2());
+            const originalCameraAspect = camera.aspect;
+
+            const canvas = document.createElement('canvas');
+            canvas.width = rawWidth;
+            canvas.height = rawHeight;
+            const ctx = canvas.getContext('2d');
+            const img = ctx.createImageData(rawWidth, rawHeight);
+            for(let i=0; i<img.data.length; i+=4) {
+                img.data[i] = heightData[i/4];
+                img.data[i+1] = heightData[i/4];
+                img.data[i+2] = heightData[i/4];
+                img.data[i+3] = 255;
+            }
+            ctx.putImageData(img, 0, 0);
+
+            const originalTerrain = terrain;
+            const originalGeometry = geometry;
+            const originalMaterial = material;
+
+            buildTerrain(canvas);
+
+            const aspectRatio = rawWidth / rawHeight;
+            const exportSize = 1600;
+            let renderWidth, renderHeight;
+
+            if (aspectRatio >= 1) {
+                renderWidth = exportSize;
+                renderHeight = exportSize / aspectRatio;
+            } else {
+                renderWidth = exportSize * aspectRatio;
+                renderHeight = exportSize;
+            }
+
+            renderer.setSize(renderWidth, renderHeight);
+            camera.aspect = renderWidth / renderHeight;
+            camera.updateProjectionMatrix();
+
+            // 计算地形的边界
+            const terrainAspectRatio = rawWidth / rawHeight;
+            const terrainWidth = 200 * Math.sqrt(terrainAspectRatio);
+            const terrainHeight = 200 / Math.sqrt(terrainAspectRatio);
+
+            // 计算相机高度，使视野精确覆盖地形
+            // 使用正交相机或透视相机的FOV计算
+            const fov = camera.fov * (Math.PI / 180);
+            const halfFov = fov / 2;
+            
+            // 根据地形尺寸和相机FOV计算需要的相机高度
+            // tan(halfFov) = (halfSize) / distance
+            // distance = (halfSize) / tan(halfFov)
+            const halfTerrainWidth = terrainWidth / 2;
+            const halfTerrainHeight = terrainHeight / 2;
+            
+            // 计算两个方向需要的距离，取较大值以确保完全覆盖
+            const distanceForWidth = halfTerrainWidth / Math.tan(halfFov);
+            const distanceForHeight = halfTerrainHeight / Math.tan(halfFov);
+            const cameraDistance = Math.max(distanceForWidth, distanceForHeight);
+            
+            // 设置相机为正上方视角，精确覆盖地形
+            camera.position.set(0, cameraDistance * 1.05, 0);
+            camera.lookAt(0, 0, 0);
+            camera.up.set(0, 0, -1);
+            controls.target.set(0, 0, 0);
+
+            requestAnimationFrame(() => {
+                for(let i = 0; i < 5; i++) {
+                    renderer.render(scene, camera);
+                }
+
+                const dataURL = renderer.domElement.toDataURL('image/png');
+
+                if(terrain) {
+                    scene.remove(terrain);
+                }
+                if(originalGeometry) {
+                    originalGeometry.dispose();
+                }
+                if(originalMaterial) {
+                    originalMaterial.dispose();
+                }
+                terrain = originalTerrain;
+                geometry = originalGeometry;
+                material = originalMaterial;
+                scene.add(terrain);
+
+                renderer.setSize(originalRendererSize.width, originalRendererSize.height);
+                camera.aspect = originalCameraAspect;
+                camera.updateProjectionMatrix();
+
+                camera.position.copy(originalCameraPosition);
+                camera.rotation.copy(originalCameraRotation);
+                controls.target.copy(originalControlsTarget);
+                controls.update();
+
+                resolve(dataURL);
+            });
+        });
+    }
+
+    // 生成DEM内容
+    function generateDemContent() {
+        const canvas = document.createElement('canvas');
+        canvas.width = rawWidth;
+        canvas.height = rawHeight;
+        const ctx = canvas.getContext('2d');
+        const imgData = ctx.createImageData(rawWidth, rawHeight);
+
+        for(let i = 0; i < heightData.length; i++) {
+            const gray = Math.round(heightData[i]);
+            imgData.data[i * 4] = gray;
+            imgData.data[i * 4 + 1] = gray;
+            imgData.data[i * 4 + 2] = gray;
+            imgData.data[i * 4 + 3] = 255;
+        }
+
+        ctx.putImageData(imgData, 0, 0);
+        return canvas.toDataURL('image/png');
+    }
+
+    // 导出DEM高度图为灰度PNG
+    function exportDemPng() {
+        if(!heightData) {
+            alert('请先导入高度图');
+            return;
+        }
+
+        const canvas = document.createElement('canvas');
+        canvas.width = rawWidth;
+        canvas.height = rawHeight;
+        const ctx = canvas.getContext('2d');
+        const imgData = ctx.createImageData(rawWidth, rawHeight);
+
+        for(let i = 0; i < heightData.length; i++) {
+            const gray = Math.round(heightData[i]);
+            imgData.data[i * 4] = gray;
+            imgData.data[i * 4 + 1] = gray;
+            imgData.data[i * 4 + 2] = gray;
+            imgData.data[i * 4 + 3] = 255;
+        }
+
+        ctx.putImageData(imgData, 0, 0);
+
+        const dataURL = canvas.toDataURL('image/png');
+        const link = document.createElement('a');
+        link.href = dataURL;
+        link.download = 'dem.png';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+
+        showImportStatus('高度图已导出为dem.png');
+    }
+
+    // 生成等高线路径（使用追踪算法生成连续曲线）
+    function generateContourPaths(targetLevel, segs, pos, minX, minZ, width, height, svgWidth, svgHeight) {
+        const paths = [];
+        const grid = new Array(segs + 1).fill(null).map(() => new Array(segs + 1).fill(0));
+
+        // 填充网格高度值
+        for(let y = 0; y <= segs; y++) {
+            for(let x = 0; x <= segs; x++) {
+                const idx = y * (segs + 1) + x;
+                grid[y][x] = pos[idx * 3 + 1];
+            }
+        }
+
+        const cellSizeX = width / segs;
+        const cellSizeZ = height / segs;
+
+        // 转换为SVG坐标
+        const toSvg = (p) => ({
+            x: ((p.x - minX) / width) * svgWidth,
+            y: svgHeight - ((p.z - minZ) / height) * svgHeight
+        });
+
+        // 插值函数
+        const interpolate = (v1, v2) => {
+            if(Math.abs(v2 - v1) < 0.0001) return 0.5;
+            return (targetLevel - v1) / (v2 - v1);
+        };
+
+        // 获取单元格的边交叉点
+        function getEdgeCrossing(x, y, edge) {
+            const tl = grid[y][x];
+            const tr = grid[y][x + 1];
+            const br = grid[y + 1][x + 1];
+            const bl = grid[y + 1][x];
+            const cellMinX = minX + x * cellSizeX;
+            const cellMinZ = minZ + y * cellSizeZ;
+
+            switch(edge) {
+                case 0: // 底边 (bottom)
+                    const t = interpolate(bl, br);
+                    return { x: cellMinX + t * cellSizeX, z: cellMinZ, edge: 'bottom', cellX: x, cellY: y };
+                case 1: // 右边 (right)
+                    const r = interpolate(br, tr);
+                    return { x: cellMinX + cellSizeX, z: cellMinZ + r * cellSizeZ, edge: 'right', cellX: x, cellY: y };
+                case 2: // 顶边 (top)
+                    const top = interpolate(tl, tr);
+                    return { x: cellMinX + top * cellSizeX, z: cellMinZ + cellSizeZ, edge: 'top', cellX: x, cellY: y };
+                case 3: // 左边 (left)
+                    const l = interpolate(bl, tl);
+                    return { x: cellMinX, z: cellMinZ + l * cellSizeZ, edge: 'left', cellX: x, cellY: y };
+            }
+            return null;
+        }
+
+        // 获取单元格的Marching Squares case index
+        function getCaseIndex(x, y) {
+            const tl = grid[y][x];
+            const tr = grid[y][x + 1];
+            const br = grid[y + 1][x + 1];
+            const bl = grid[y + 1][x];
+            let caseIndex = 0;
+            if(tl > targetLevel) caseIndex |= 8;
+            if(tr > targetLevel) caseIndex |= 4;
+            if(br > targetLevel) caseIndex |= 2;
+            if(bl > targetLevel) caseIndex |= 1;
+            return caseIndex;
+        }
+
+        // 获取单元格的起始边和结束边
+        function getCellEdges(caseIndex) {
+            const edgePairs = {
+                1: [[0, 3]], 2: [[0, 1]], 3: [[1, 3]], 4: [[1, 2]],
+                5: [[0, 3], [1, 2]], 6: [[0, 2]], 7: [[2, 3]], 8: [[2, 3]],
+                9: [[0, 2]], 10: [[0, 1], [2, 3]], 11: [[1, 2]], 12: [[1, 3]],
+                13: [[0, 1]], 14: [[0, 3]]
+            };
+            return edgePairs[caseIndex] || [];
+        }
+
+        // 获取相邻单元格
+        function getNeighborCell(cellX, cellY, edge) {
+            switch(edge) {
+                case 'bottom': return { x: cellX, y: cellY - 1, enterEdge: 'top' };
+                case 'top': return { x: cellX, y: cellY + 1, enterEdge: 'bottom' };
+                case 'left': return { x: cellX - 1, y: cellY, enterEdge: 'right' };
+                case 'right': return { x: cellX + 1, y: cellY, enterEdge: 'left' };
+            }
+            return null;
+        }
+
+        // 追踪单条等高线
+        function traceContour(startX, startY, startEdge, visited) {
+            const points = [];
+            let currentX = startX;
+            let currentY = startY;
+            let enterEdge = startEdge;
+            let iterations = 0;
+            const maxIterations = segs * segs * 2;
+
+            while(iterations < maxIterations) {
+                const key = `${currentX},${currentY},${enterEdge}`;
+                if(visited.has(key)) break;
+                visited.add(key);
+
+                const caseIndex = getCaseIndex(currentX, currentY);
+                if(caseIndex === 0 || caseIndex === 15) break;
+
+                const edges = getCellEdges(caseIndex);
+                let exitEdge = null;
+
+                for(const [e1, e2] of edges) {
+                    const edge1Name = ['bottom', 'right', 'top', 'left'][e1];
+                    const edge2Name = ['bottom', 'right', 'top', 'left'][e2];
+                    if(edge1Name === enterEdge) {
+                        exitEdge = edge2Name;
+                        break;
+                    } else if(edge2Name === enterEdge) {
+                        exitEdge = edge1Name;
+                        break;
+                    }
+                }
+
+                if(!exitEdge) break;
+
+                // 获取出口点
+                const exitPoint = getEdgeCrossing(currentX, currentY, ['bottom', 'right', 'top', 'left'].indexOf(exitEdge));
+                points.push(exitPoint);
+
+                // 移动到相邻单元格
+                const neighbor = getNeighborCell(currentX, currentY, exitEdge);
+                if(!neighbor || neighbor.x < 0 || neighbor.x >= segs || neighbor.y < 0 || neighbor.y >= segs) {
+                    break;
+                }
+
+                currentX = neighbor.x;
+                currentY = neighbor.y;
+                enterEdge = neighbor.enterEdge;
+                iterations++;
+            }
+
+            return points;
+        }
+
+        // 查找所有等高线起点并追踪
+        const visited = new Set();
+        const allPaths = [];
+
+        // 从边界开始查找起点
+        for(let y = 0; y < segs; y++) {
+            for(let x = 0; x < segs; x++) {
+                const caseIndex = getCaseIndex(x, y);
+                if(caseIndex === 0 || caseIndex === 15) continue;
+
+                const edges = getCellEdges(caseIndex);
+                for(const [e1, e2] of edges) {
+                    const edgeNames = ['bottom', 'right', 'top', 'left'];
+                    const startEdge = edgeNames[e1];
+                    const key = `${x},${y},${startEdge}`;
+
+                    if(!visited.has(key)) {
+                        // 获取起始点
+                        const startPoint = getEdgeCrossing(x, y, e1);
+                        const points = traceContour(x, y, startEdge, visited);
+
+                        if(points.length > 0) {
+                            // 构建SVG路径
+                            let pathD = `M${toSvg(startPoint).x.toFixed(2)},${toSvg(startPoint).y.toFixed(2)}`;
+                            for(const pt of points) {
+                                pathD += ` L${toSvg(pt).x.toFixed(2)},${toSvg(pt).y.toFixed(2)}`;
+                            }
+                            allPaths.push({ d: pathD, points: [startPoint, ...points] });
+                        }
+                    }
+                }
+            }
+        }
+
+        return allPaths;
+    }
+
+    // 从heightData生成等高线路径（直接从dem.png数据）
+    function generateContourPathsFromHeightData(targetLevel, gridWidth, gridHeight, heightData, svgWidth, svgHeight) {
+        const paths = [];
+
+        // 创建网格
+        const grid = new Array(gridHeight).fill(null).map(() => new Array(gridWidth).fill(0));
+        for(let y = 0; y < gridHeight; y++) {
+            for(let x = 0; x < gridWidth; x++) {
+                grid[y][x] = heightData[y * gridWidth + x];
+            }
+        }
+
+        // 转换为SVG坐标
+        const toSvg = (px, py) => ({
+            x: (px / (gridWidth - 1)) * svgWidth,
+            y: svgHeight - (py / (gridHeight - 1)) * svgHeight
+        });
+
+        // 插值函数
+        const interpolate = (v1, v2) => {
+            if(Math.abs(v2 - v1) < 0.0001) return 0.5;
+            return (targetLevel - v1) / (v2 - v1);
+        };
+
+        // 获取单元格的边交叉点
+        function getEdgeCrossing(x, y, edge) {
+            const tl = grid[y][x];
+            const tr = grid[y][x + 1];
+            const br = grid[y + 1][x + 1];
+            const bl = grid[y + 1][x];
+
+            switch(edge) {
+                case 0: // 底边
+                    const t = interpolate(bl, br);
+                    return { x: x + t, y: y, edge: 'bottom', cellX: x, cellY: y };
+                case 1: // 右边
+                    const r = interpolate(br, tr);
+                    return { x: x + 1, y: y + r, edge: 'right', cellX: x, cellY: y };
+                case 2: // 顶边
+                    const top = interpolate(tl, tr);
+                    return { x: x + top, y: y + 1, edge: 'top', cellX: x, cellY: y };
+                case 3: // 左边
+                    const l = interpolate(bl, tl);
+                    return { x: x, y: y + l, edge: 'left', cellX: x, cellY: y };
+            }
+            return null;
+        }
+
+        // 获取单元格的Marching Squares case index
+        function getCaseIndex(x, y) {
+            const tl = grid[y][x];
+            const tr = grid[y][x + 1];
+            const br = grid[y + 1][x + 1];
+            const bl = grid[y + 1][x];
+            let caseIndex = 0;
+            if(tl > targetLevel) caseIndex |= 8;
+            if(tr > targetLevel) caseIndex |= 4;
+            if(br > targetLevel) caseIndex |= 2;
+            if(bl > targetLevel) caseIndex |= 1;
+            return caseIndex;
+        }
+
+        // 获取单元格的起始边和结束边
+        function getCellEdges(caseIndex) {
+            const edgePairs = {
+                1: [[0, 3]], 2: [[0, 1]], 3: [[1, 3]], 4: [[1, 2]],
+                5: [[0, 3], [1, 2]], 6: [[0, 2]], 7: [[2, 3]], 8: [[2, 3]],
+                9: [[0, 2]], 10: [[0, 1], [2, 3]], 11: [[1, 2]], 12: [[1, 3]],
+                13: [[0, 1]], 14: [[0, 3]]
+            };
+            return edgePairs[caseIndex] || [];
+        }
+
+        // 获取相邻单元格
+        function getNeighborCell(cellX, cellY, edge) {
+            switch(edge) {
+                case 'bottom': return { x: cellX, y: cellY - 1, enterEdge: 'top' };
+                case 'top': return { x: cellX, y: cellY + 1, enterEdge: 'bottom' };
+                case 'left': return { x: cellX - 1, y: cellY, enterEdge: 'right' };
+                case 'right': return { x: cellX + 1, y: cellY, enterEdge: 'left' };
+            }
+            return null;
+        }
+
+        // 追踪单条等高线
+        function traceContour(startX, startY, startEdge, visited) {
+            const points = [];
+            let currentX = startX;
+            let currentY = startY;
+            let enterEdge = startEdge;
+            let iterations = 0;
+            const maxIterations = gridWidth * gridHeight * 2;
+
+            while(iterations < maxIterations) {
+                const key = `${currentX},${currentY},${enterEdge}`;
+                if(visited.has(key)) break;
+                visited.add(key);
+
+                const caseIndex = getCaseIndex(currentX, currentY);
+                if(caseIndex === 0 || caseIndex === 15) break;
+
+                const edges = getCellEdges(caseIndex);
+                let exitEdge = null;
+
+                for(const [e1, e2] of edges) {
+                    const edge1Name = ['bottom', 'right', 'top', 'left'][e1];
+                    const edge2Name = ['bottom', 'right', 'top', 'left'][e2];
+                    if(edge1Name === enterEdge) {
+                        exitEdge = edge2Name;
+                        break;
+                    } else if(edge2Name === enterEdge) {
+                        exitEdge = edge1Name;
+                        break;
+                    }
+                }
+
+                if(!exitEdge) break;
+
+                // 获取出口点
+                const exitPoint = getEdgeCrossing(currentX, currentY, ['bottom', 'right', 'top', 'left'].indexOf(exitEdge));
+                points.push(exitPoint);
+
+                // 移动到相邻单元格
+                const neighbor = getNeighborCell(currentX, currentY, exitEdge);
+                if(!neighbor || neighbor.x < 0 || neighbor.x >= gridWidth - 1 || neighbor.y < 0 || neighbor.y >= gridHeight - 1) {
+                    break;
+                }
+
+                currentX = neighbor.x;
+                currentY = neighbor.y;
+                enterEdge = neighbor.enterEdge;
+                iterations++;
+            }
+
+            return points;
+        }
+
+        // 查找所有等高线起点并追踪
+        const visited = new Set();
+        const allPaths = [];
+
+        // 遍历所有单元格
+        for(let y = 0; y < gridHeight - 1; y++) {
+            for(let x = 0; x < gridWidth - 1; x++) {
+                const caseIndex = getCaseIndex(x, y);
+                if(caseIndex === 0 || caseIndex === 15) continue;
+
+                const edges = getCellEdges(caseIndex);
+                for(const [e1, e2] of edges) {
+                    const edgeNames = ['bottom', 'right', 'top', 'left'];
+                    const startEdge = edgeNames[e1];
+                    const key = `${x},${y},${startEdge}`;
+
+                    if(!visited.has(key)) {
+                        // 获取起始点
+                        const startPoint = getEdgeCrossing(x, y, e1);
+                        const points = traceContour(x, y, startEdge, visited);
+
+                        if(points.length > 0) {
+                            // 构建SVG路径
+                            const svgStart = toSvg(startPoint.x, startPoint.y);
+                            let pathD = `M${svgStart.x.toFixed(2)},${svgStart.y.toFixed(2)}`;
+                            for(const pt of points) {
+                                const svgPt = toSvg(pt.x, pt.y);
+                                pathD += ` L${svgPt.x.toFixed(2)},${svgPt.y.toFixed(2)}`;
+                            }
+                            allPaths.push({ d: pathD, points: [startPoint, ...points] });
+                        }
+                    }
+                }
+            }
+        }
+
+        return allPaths;
+    }
+
+    // 导出等高线（参考gd copy.html）
+    async function exportContours() {
+        if(!heightData) {
+            alert('请先导入高度图');
+            return;
+        }
+
+        showImportStatus('正在导出等高线...');
+
+        const zip = new JSZip();
+        const now = new Date();
+        const timestamp = `${now.getFullYear()}${(now.getMonth()+1).toString().padStart(2,'0')}${now.getDate().toString().padStart(2,'0')}${now.getHours().toString().padStart(2,'0')}${now.getMinutes().toString().padStart(2,'0')}`;
+
+        // 获取高程范围
+        let minHeight = Infinity, maxHeight = -Infinity;
+        for(let i = 0; i < heightData.length; i++) {
+            minHeight = Math.min(minHeight, heightData[i]);
+            maxHeight = Math.max(maxHeight, heightData[i]);
+        }
+
+        // 计算等高距（参考gd copy.html的自动计算逻辑）
+        const diff = maxHeight - minHeight;
+        let ideal = diff / 12;
+        const magnitude = Math.pow(10, Math.floor(Math.log10(ideal)));
+        const res = ideal / magnitude;
+        let step;
+        if (res < 1.5) step = 1 * magnitude;
+        else if (res < 3.5) step = 2 * magnitude;
+        else if (res < 7.5) step = 5 * magnitude;
+        else step = 10 * magnitude;
+
+        // 设置导出分辨率（提高到1600px宽）
+        const exportWidth = 1600;
+        const aspectRatio = rawHeight / rawWidth;
+        const exportHeight = Math.round(exportWidth * aspectRatio);
+
+        // 创建高分辨率的数据
+        const { data, width, height } = { data: heightData, width: rawWidth, height: rawHeight };
+
+        // 1. 先生成等高线SVG（使用原始尺寸和坐标）
+        let svgPaths = "";
+        let svgTexts = "";
+
+        for (let v = Math.ceil(minHeight / step) * step; v <= maxHeight; v += step) {
+            const targetGray = ((v - minHeight) / (maxHeight - minHeight)) * 255;
+            const segments = getContourSegments(data, width, height, targetGray);
+            if (segments.length === 0) continue;
+
+            const isMajor = v % (step * 5) === 0;
+            const color = isMajor ? '#52525b' : '#a1a1aa';
+            const weight = isMajor ? 0.8 : 0.4;
+            
+            let pathData = "";
+            segments.forEach((seg, i) => {
+                const [p1, p2] = seg;
+                pathData += `M${p1[0].toFixed(1)},${p1[1].toFixed(1)} L${p2[0].toFixed(1)},${p2[1].toFixed(1)} `;
+                
+                if (isMajor && i === Math.floor(segments.length / 2)) {
+                    svgTexts += `<text x="${p1[0]}" y="${p1[1]}" font-family="sans-serif" font-size="9" fill="#3f3f46" text-anchor="middle">${v}</text>`;
+                }
+            });
+            svgPaths += `<path d="${pathData}" stroke="${color}" stroke-width="${weight}" fill="none"/>`;
+        }
+
+        const svgFull = `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg"><rect x="0" y="0" width="${width}" height="${height}" fill="white"/>${svgPaths}${svgTexts}</svg>`;
+        zip.file('等高线.svg', svgFull);
+
+        // 2. 从SVG转换为高分辨率PNG
+        const img = new Image();
+        const svgBlob = new Blob([svgFull], { type: 'image/svg+xml;charset=utf-8' });
+        const url = URL.createObjectURL(svgBlob);
+        
+        const canvas = document.createElement('canvas');
+        canvas.width = exportWidth;
+        canvas.height = exportHeight;
+        const ctx = canvas.getContext('2d');
+        
+        await new Promise((resolve) => {
+            img.onload = () => {
+                ctx.drawImage(img, 0, 0, exportWidth, exportHeight);
+                URL.revokeObjectURL(url);
+                resolve();
+            };
+            img.onerror = (e) => {
+                console.error('SVG加载失败:', e);
+                resolve();
+            };
+            img.src = url;
+        });
+
+        const pngBase64 = canvas.toDataURL('image/png').split(',')[1];
+        zip.file('等高线.png', pngBase64, { base64: true });
+
+        // 3. 生成DEM（高分辨率）
+        const demCanvas = document.createElement('canvas');
+        demCanvas.width = exportWidth;
+        demCanvas.height = exportHeight;
+        const demCtx = demCanvas.getContext('2d');
+        const imgData = demCtx.createImageData(exportWidth, exportHeight);
+
+        // 使用双线性插值放大DEM
+        for(let y = 0; y < exportHeight; y++) {
+            for(let x = 0; x < exportWidth; x++) {
+                const srcX = (x / exportWidth) * (width - 1);
+                const srcY = (y / exportHeight) * (height - 1);
+                const x0 = Math.floor(srcX);
+                const y0 = Math.floor(srcY);
+                const x1 = Math.min(x0 + 1, width - 1);
+                const y1 = Math.min(y0 + 1, height - 1);
+                const fx = srcX - x0;
+                const fy = srcY - y0;
+
+                const v00 = heightData[y0 * width + x0];
+                const v10 = heightData[y0 * width + x1];
+                const v01 = heightData[y1 * width + x0];
+                const v11 = heightData[y1 * width + x1];
+
+                const v0 = v00 * (1 - fx) + v10 * fx;
+                const v1 = v01 * (1 - fx) + v11 * fx;
+                const v = v0 * (1 - fy) + v1 * fy;
+
+                const idx = (y * exportWidth + x) * 4;
+                const gray = Math.round(v);
+                imgData.data[idx] = gray;
+                imgData.data[idx + 1] = gray;
+                imgData.data[idx + 2] = gray;
+                imgData.data[idx + 3] = 255;
+            }
+        }
+
+        demCtx.putImageData(imgData, 0, 0);
+        const demBase64 = demCanvas.toDataURL('image/png').split(',')[1];
+        zip.file('dem.png', demBase64, { base64: true });
+
+        // 4. 生成ZIP并下载
+        const content = await zip.generateAsync({ type: 'blob' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(content);
+        link.download = `等高线${timestamp}.zip`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(link.href);
+
+        showImportStatus('等高线导出完成！');
+    }
+
+    // 导出分层设色地形图（参考gd copy.html）
+    async function exportHypsometric() {
+        if(!heightData) {
+            alert('请先导入高度图');
+            return;
+        }
+
+        showImportStatus('正在导分层设色地形图...');
+
+        const zip = new JSZip();
+        const now = new Date();
+        const timestamp = `${now.getFullYear()}${(now.getMonth()+1).toString().padStart(2,'0')}${now.getDate().toString().padStart(2,'0')}${now.getHours().toString().padStart(2,'0')}${now.getMinutes().toString().padStart(2,'0')}`;
+
+        const { data, width, height } = { data: heightData, width: rawWidth, height: rawHeight };
+        let minHeight = Infinity, maxHeight = -Infinity;
+        for(let i = 0; i < heightData.length; i++) {
+            minHeight = Math.min(minHeight, heightData[i]);
+            maxHeight = Math.max(maxHeight, heightData[i]);
+        }
+
+        // 计算等高距
+        const diff = maxHeight - minHeight;
+        let ideal = diff / 12;
+        const magnitude = Math.pow(10, Math.floor(Math.log10(ideal)));
+        const res = ideal / magnitude;
+        let step;
+        if (res < 1.5) step = 1 * magnitude;
+        else if (res < 3.5) step = 2 * magnitude;
+        else if (res < 7.5) step = 5 * magnitude;
+        else step = 10 * magnitude;
+
+        // 使用默认调色板
+        const palette = [
+            { name: '经典地理', colors: [0x051a10, 0x14311c, 0x2a4d31, 0x4d5d3d, 0x7b6d4e, 0xa38c6d, 0xd4c0a1, 0xffffff] }
+        ];
+        const colors = palette[0].colors;
+
+        const activePhysLevels = [];
+        for (let v = Math.ceil(minHeight / step) * step; v <= maxHeight; v += step) activePhysLevels.push(v);
+        activePhysLevels.reverse();
+
+        // 设置高分辨率导出（1600px宽）
+        const exportWidth = 1600;
+        const aspectRatio = height / width;
+        const exportHeight = Math.round(exportWidth * aspectRatio);
+
+        // 缩放因子
+        const scaleX = exportWidth / width;
+        const scaleY = exportHeight / height;
+
+        const padding = 25;
+        const legendWidth = 180;
+        const barHeight = Math.min(30, (exportHeight - 100) / activePhysLevels.length);
+        const finalCanvasHeight = Math.max(exportHeight, activePhysLevels.length * (barHeight + 4) + 120);
+
+        // 1. 先生成分层设色SVG（高分辨率，纯SVG不包含PNG图像）
+        let svgStr = `<svg width="${exportWidth + legendWidth}" height="${finalCanvasHeight}" xmlns="http://www.w3.org/2000/svg">`;
+        svgStr += `<rect width="100%" height="100%" fill="white"/>`;
+
+        // 生成分层设色地图的SVG路径
+        let mapSvgPaths = "";
+        const cellWidth = exportWidth / width;
+        const cellHeight = exportHeight / height;
+
+        for(let y = 0; y < height; y++) {
+            for(let x = 0; x < width; x++) {
+                const idx = y * width + x;
+                const currentPhys = minHeight + (data[idx] / 255) * (maxHeight - minHeight);
+                const discretePhys = Math.floor(currentPhys / step) * step;
+                const t = (discretePhys - minHeight) / (maxHeight - minHeight);
+                const c = new THREE.Color(colors[Math.min(colors.length - 1, Math.max(0, Math.floor(t * colors.length)))]);
+                
+                const rectX = x * cellWidth;
+                const rectY = y * cellHeight;
+                mapSvgPaths += `<rect x="${rectX}" y="${rectY}" width="${cellWidth + 1}" height="${cellHeight + 1}" fill="#${c.getHexString()}" stroke="none"/>`;
+            }
+        }
+        svgStr += mapSvgPaths;
+
+        // 绘制图例
+        const lx = exportWidth + 20;
+        svgStr += `<text x="${lx}" y="30" font-family="sans-serif" font-weight="bold" font-size="14" fill="#18181b">分层设色图例</text>`;
+        svgStr += `<text x="${lx}" y="50" font-family="monospace" font-size="11" fill="#71717a">等高距: ${step}m</text>`;
+        activePhysLevels.forEach((v, i) => {
+            const t = (v - minHeight) / (maxHeight - minHeight);
+            const c = new THREE.Color(colors[Math.min(colors.length - 1, Math.max(0, Math.floor(t * colors.length)))]);
+            const ly = 65 + i * (barHeight + 4);
+            svgStr += `<rect x="${lx}" y="${ly}" width="35" height="${barHeight}" fill="#${c.getHexString()}"/>`;
+            svgStr += `<text x="${lx + 42}" y="${ly + barHeight * 0.75}" font-family="sans-serif" font-size="11" fill="#3f3f46">${v} m</text>`;
+        });
+        svgStr += `</svg>`;
+
+        zip.file('分层设色.svg', svgStr);
+
+        // 2. 从SVG转换为PNG
+        const canvas = document.createElement('canvas');
+        canvas.width = exportWidth + legendWidth;
+        canvas.height = finalCanvasHeight;
+        const ctx = canvas.getContext('2d');
+        
+        const img = new Image();
+        const svgBlob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' });
+        const url = URL.createObjectURL(svgBlob);
+        
+        await new Promise((resolve) => {
+            img.onload = () => {
+                ctx.drawImage(img, 0, 0);
+                URL.revokeObjectURL(url);
+                resolve();
+            };
+            img.src = url;
+        });
+
+        const pngBase64 = canvas.toDataURL('image/png').split(',')[1];
+        zip.file('分层设色.png', pngBase64, { base64: true });
+
+        // 3. 生成ZIP并下载
+        const content = await zip.generateAsync({ type: 'blob' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(content);
+        link.download = `分层设色${timestamp}.zip`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(link.href);
+
+        showImportStatus('分层设色地形图导出完成！');
+    }
+
+    // Marching Squares算法（参考gd copy.html）
+    function getContourSegments(data, width, height, level) {
+        const segments = [];
+        const lerp = (p1, p2, v1, v2, target) => p1 + (p2 - p1) * (target - v1) / (v2 - v1);
+        
+        for (let y = 0; y < height - 1; y++) {
+            for (let x = 0; x < width - 1; x++) {
+                const idx = y * width + x;
+                const v0 = data[idx], v1 = data[idx + 1], v2 = data[idx + width + 1], v3 = data[idx + width];
+                let caseIndex = (v0>=level?8:0)|(v1>=level?4:0)|(v2>=level?2:0)|(v3>=level?1:0);
+                
+                const t = [lerp(x,x+1,v0,v1,level),y];
+                const r = [x+1,lerp(y,y+1,v1,v2,level)];
+                const b = [lerp(x,x+1,v3,v2,level),y+1];
+                const l = [x,lerp(y,y+1,v0,v3,level)];
+                
+                switch(caseIndex){
+                    case 1:case 14:segments.push([l,b]);break;
+                    case 2:case 13:segments.push([b,r]);break;
+                    case 3:case 12:segments.push([l,r]);break;
+                    case 4:case 11:segments.push([t,r]);break;
+                    case 5:segments.push([t,l],[b,r]);break;
+                    case 6:case 9:segments.push([t,b]);break;
+                    case 7:case 8:segments.push([t,l]);break;
+                    case 10:segments.push([t,r],[b,l]);break;
+                }
+            }
+        }
+        return segments;
+    }
+
+    function updateHeight() {
+        if(!terrain) return;
+        const val = parseFloat(this.value);
+        terrain.scale.y = val;
+        document.getElementById('height-val').innerText = val.toFixed(1) + 'x';
+    }
+
+    function updateDetail() {
+        if(!heightData) return;
+        const canvas = document.createElement('canvas');
+        canvas.width = rawWidth;
+        canvas.height = rawHeight;
+        const ctx = canvas.getContext('2d');
+        const img = ctx.createImageData(rawWidth, rawHeight);
+        for(let i=0; i<img.data.length; i+=4) {
+            img.data[i] = heightData[i/4];
+            img.data[i+1] = heightData[i/4];
+            img.data[i+2] = heightData[i/4];
+            img.data[i+3] = 255;
+        }
+        ctx.putImageData(img, 0, 0);
+        buildTerrain(canvas);
+    }
+
+    function applyCustomPalette() {
+        const colorInputs = document.querySelectorAll('#custom-color-inputs input[type="color"]');
+        const customColors = [];
+        const swatchItems = document.querySelectorAll('#custom-colors .swatch-item');
+        
+        colorInputs.forEach((input, index) => {
+            const hex = input.value;
+            const r = parseInt(hex.slice(1, 3), 16);
+            const g = parseInt(hex.slice(3, 5), 16);
+            const b = parseInt(hex.slice(5, 7), 16);
+            customColors.push((r << 16) | (g << 8) | b);
+            
+            if (swatchItems[index]) {
+                swatchItems[index].style.backgroundColor = hex;
+            }
+        });
+        
+        currentPalette = customColors;
+        document.querySelectorAll('.palette-card').forEach(c => c.classList.remove('active'));
+        updateUniforms();
+    }
+
+    function autoGetLocation() {
+        if (navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(
+                (position) => {
+                    const lat = position.coords.latitude;
+                    document.getElementById('latitude').value = lat.toFixed(1);
+                    document.getElementById('latitude-val').innerText = lat.toFixed(1) + '°';
+                },
+                (error) => {
+                    alert('无法获取位置信息：' + error.message);
+                }
+            );
+        } else {
+            alert('您的浏览器不支持地理位置功能');
+        }
+    }
+
+    function autoGetDate() {
+        const today = new Date();
+        const year = today.getFullYear();
+        const month = String(today.getMonth() + 1).padStart(2, '0');
+        const day = String(today.getDate()).padStart(2, '0');
+        const dateStr = `${year}-${month}-${day}`;
+        document.getElementById('date-input').value = dateStr;
+        document.getElementById('date-val').innerText = dateStr;
+    }
+
+    function calculateSunPosition() {
+        const latitude = parseFloat(document.getElementById('latitude').value);
+        const dateStr = document.getElementById('date-input').value;
+        
+        if (!dateStr) {
+            alert('请先设置日期');
+            return;
+        }
+
+        const date = new Date(dateStr);
+        const dayOfYear = getDayOfYear(date);
+        
+        const declination = 23.45 * Math.sin((360 / 365) * (dayOfYear - 81) * Math.PI / 180);
+        const hourAngle = 15 * 12;
+        
+        const sinElevation = Math.sin(latitude * Math.PI / 180) * Math.sin(declination * Math.PI / 180) + 
+                            Math.cos(latitude * Math.PI / 180) * Math.cos(declination * Math.PI / 180) * Math.cos(hourAngle * Math.PI / 180);
+        const elevation = Math.asin(sinElevation) * 180 / Math.PI;
+        
+        const sinAzimuth = Math.sin(hourAngle * Math.PI / 180);
+        const cosAzimuth = Math.cos(hourAngle * Math.PI / 180) * Math.sin(latitude * Math.PI / 180) - 
+                           Math.tan(declination * Math.PI / 180) * Math.cos(latitude * Math.PI / 180);
+        const azimuth = Math.atan2(sinAzimuth, cosAzimuth) * 180 / Math.PI;
+        const normalizedAzimuth = (azimuth + 360) % 360;
+        
+        document.getElementById('sun-elevation').value = Math.max(0, Math.min(90, elevation)).toFixed(0);
+        document.getElementById('sun-elevation-val').innerText = Math.max(0, Math.min(90, elevation)).toFixed(0) + '°';
+        document.getElementById('sun-azimuth').value = normalizedAzimuth.toFixed(0);
+        document.getElementById('sun-azimuth-val').innerText = normalizedAzimuth.toFixed(0) + '°';
+        
+        updateSunPosition(Math.max(0, Math.min(90, elevation)), normalizedAzimuth);
+    }
+
+    function getDayOfYear(date) {
+        const start = new Date(date.getFullYear(), 0, 0);
+        const diff = date - start;
+        const oneDay = 1000 * 60 * 60 * 24;
+        return Math.floor(diff / oneDay);
+    }
+
+    function calculateSunriseSunset(latitude, dateStr) {
+        const date = new Date(dateStr);
+        const dayOfYear = getDayOfYear(date);
+        
+        const declination = 23.45 * Math.sin((360 / 365) * (dayOfYear - 81) * Math.PI / 180);
+        const latRad = latitude * Math.PI / 180;
+        const decRad = declination * Math.PI / 180;
+        
+        const cosHourAngle = -Math.tan(latRad) * Math.tan(decRad);
+        
+        if (cosHourAngle > 1) {
+            return { sunrise: null, sunset: null };
+        }
+        if (cosHourAngle < -1) {
+            return { sunrise: null, sunset: null };
+        }
+        
+        const hourAngleRad = Math.acos(cosHourAngle);
+        const hourAngleDeg = hourAngleRad * 180 / Math.PI;
+        
+        const sunriseHour = 12 - hourAngleDeg / 15;
+        const sunsetHour = 12 + hourAngleDeg / 15;
+        
+        return {
+            sunrise: formatTime(sunriseHour),
+            sunset: formatTime(sunsetHour)
+        };
+    }
+
+    function formatTime(decimalHours) {
+        const hours = Math.floor(decimalHours);
+        const minutes = Math.round((decimalHours - hours) * 60);
+        return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+    }
+
+    function calculateSunPositionByTime(timeMinutes, latitude, dateStr) {
+        const date = new Date(dateStr);
+        const dayOfYear = getDayOfYear(date);
+        
+        const declination = 23.45 * Math.sin((360 / 365) * (dayOfYear - 81) * Math.PI / 180);
+        const latRad = latitude * Math.PI / 180;
+        const decRad = declination * Math.PI / 180;
+        
+        const hourAngle = (timeMinutes / 60 - 12) * 15;
+        const hourAngleRad = hourAngle * Math.PI / 180;
+        
+        const sinElevation = Math.sin(latRad) * Math.sin(decRad) + 
+                            Math.cos(latRad) * Math.cos(decRad) * Math.cos(hourAngleRad);
+        const elevation = Math.asin(sinElevation) * 180 / Math.PI;
+        
+        const sinAzimuth = Math.sin(hourAngleRad);
+        const cosAzimuth = Math.cos(hourAngleRad) * Math.sin(latRad) - 
+                           Math.tan(decRad) * Math.cos(latRad);
+        const azimuth = Math.atan2(sinAzimuth, cosAzimuth) * 180 / Math.PI;
+        const normalizedAzimuth = (azimuth + 360) % 360;
+        
+        return {
+            elevation: Math.max(0, Math.min(90, elevation)),
+            azimuth: normalizedAzimuth
+        };
+    }
+
+    function onWindowResize() {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    function animate() {
+        requestAnimationFrame(animate);
+        controls.update();
+        
+        // 更新标记大小，使其随相机距离自动缩放
+        if (window.markerGroup && window.markerGroup.children.length > 0) {
+            const cameraDistance = camera.position.distanceTo(controls.target);
+            const baseScale = 1.0;
+            const scaleFactor = cameraDistance / 200;
+            
+            window.markerGroup.children.forEach((child) => {
+                // 标记点（球体）
+                if (child.geometry && child.geometry.type === 'SphereGeometry') {
+                    child.scale.setScalar(baseScale * scaleFactor);
+                }
+                // 标签（Sprite）
+                else if (child.material && child.material.map) {
+                    child.scale.set(15 * scaleFactor, 5.6 * scaleFactor, 1);
+                }
+            });
+        }
+        
+        renderer.render(scene, camera);
+    }
+</script>
+</body>
+</html>
