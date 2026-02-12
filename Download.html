@@ -168,11 +168,11 @@
                     <h3 class="font-bold text-slate-700 pt-2 text-sm border-t border-slate-100">3. 导出方式</h3>
                     <div class="space-y-2">
                         <label class="flex items-center gap-2 text-sm cursor-pointer">
-                            <input type="radio" name="export-mode" value="separate" checked class="w-4 h-4 text-blue-600">
+                            <input type="radio" name="export-mode" value="separate" class="w-4 h-4 text-blue-600">
                             <span>分别导出多个文件</span>
                         </label>
                         <label class="flex items-center gap-2 text-sm cursor-pointer">
-                            <input type="radio" name="export-mode" value="zip" class="w-4 h-4 text-blue-600">
+                            <input type="radio" name="export-mode" value="zip" checked class="w-4 h-4 text-blue-600">
                             <span>打包导出为 ZIP 文件</span>
                         </label>
                     </div>
@@ -468,7 +468,7 @@
 
             const area = Math.abs(e - w) * Math.abs(n - s);
             const estimatedMB = area * 50; 
-            if (estimatedMB > 20) {
+            if (estimatedMB > 50) {
                 sizeEstimate.innerHTML = `<span class="text-red-500 font-bold">警告: 约 ${estimatedMB.toFixed(1)}MB (超限)</span>`;
                 downloadBtn.disabled = true;
             } else {
