@@ -57,6 +57,8 @@
         }
         .btn-action:hover { border-color: #71717a; color: #fff; }
         .btn-action.active { background: rgba(59, 130, 246, 0.2); border-color: #3b82f6; color: #60a5fa; }
+        .btn-action.hidden { display: none; }
+        .texture-btn.hidden { display: none; }
         .btn-danger:hover { border-color: #ef4444; color: #f87171; }
 
         .palette-card {
@@ -207,6 +209,10 @@
         <span class="fold-icon">▼</span>
     </div>
     <div class="panel-content">
+        <button id="goto-download" class="btn-action w-full mb-0" title="跳转到下载页面">
+            📥 前往下载页面
+        </button>
+
         <!-- 1. 批量导入 -->
         <div class="section-title">批量导入</div>
         <div class="space-y-2">
@@ -236,6 +242,22 @@
             </label>
             <button id="generate-random-terrain" class="btn-action col-span-3" title="生成随机地形">🎲 生成随机地形</button>
             <button id="remove-texture" class="btn-action btn-danger col-span-3 hidden">移除叠加纹理</button>
+            <div id="texture-switcher" class="col-span-3 hidden">
+                <div class="text-[10px] text-zinc-400 mb-2">切换纹理</div>
+                <div class="grid grid-cols-4 gap-2">
+                    <button class="texture-btn btn-action active" data-texture="sat">卫星图</button>
+                    <button class="texture-btn btn-action" data-texture="openmap">OpenMap</button>
+                    <button class="texture-btn btn-action" data-texture="map">地图</button>
+                    <button class="texture-btn btn-action" data-texture="satellite">ESRI卫星</button>
+                    <button class="texture-btn btn-action" data-texture="esri">ESRI地图</button>
+                    <button class="texture-btn btn-action" data-texture="topo">ESRI地形</button>
+                    <button class="texture-btn btn-action" data-texture="natgeo">国家地理</button>
+                    <button class="texture-btn btn-action" data-texture="transport">ESRI交通</button>
+                    <button class="texture-btn btn-action" data-texture="relief">ESRI阴影</button>
+                    <button class="texture-btn btn-action" data-texture="osm">OSM</button>
+                    <button class="texture-btn btn-action" data-texture="gaode">高德卫星</button>
+                </div>
+            </div>
         </div>
 
         <!-- 3. 地形调节 -->
@@ -252,9 +274,16 @@
                 <div>
                     <div class="flex justify-between mb-1 text-[10px] text-zinc-400">
                         <label>高度系数</label>
-                        <span id="height-val" class="text-blue-400 font-mono">1.0x</span>
+                        <span id="height-val" class="text-blue-400 font-mono">1.00x</span>
                     </div>
-                    <input type="range" id="height-scale" min="0.01" max="3" step="0.01" value="1">
+                    <input type="range" id="height-scale" min="0" max="100" step="1" value="58">
+                </div>
+                <div>
+                    <div class="flex justify-between mb-1 text-[10px] text-zinc-400">
+                        <label>基座厚度</label>
+                        <span id="skirt-depth-val" class="text-zinc-500 font-mono">20</span>
+                    </div>
+                    <input type="range" id="skirt-depth" min="0" max="100" step="5" value="20">
                 </div>
             </div>
 
@@ -274,7 +303,7 @@
                         <label>等高距</label>
                         <span id="contour-spacing-val" class="text-zinc-500 font-mono">20.0</span>
                     </div>
-                    <input type="range" id="contour-spacing" min="1" max="50" step="1" value="20">
+                    <input type="range" id="contour-spacing" min="0" max="100" step="1" value="77">
                 </div>
                 <div>
                     <div class="flex justify-between mb-1 text-[10px] text-zinc-400">
@@ -449,6 +478,8 @@
     let heightData = null, rawWidth = 0, rawHeight = 0;
     let customTexture = null;
     let contourLabelsGroup = null;
+    let terrainGroup = null; // 地形组（包含地形、基座、方位标记）
+    let skirtMesh = null, bottomMesh = null; // 基座侧面和底面
     
     const paletteData = [
         { name: '经典地理', colors: [0x051a10, 0x14311c, 0x2a4d31, 0x4d5d3d, 0x7b6d4e, 0xa38c6d, 0xd4c0a1, 0xffffff] },
@@ -516,6 +547,10 @@
         scene.add(markerGroup);
         window.markerGroup = markerGroup;
         
+        // 地形组（包含地形、基座、方位标记）
+        terrainGroup = new THREE.Group();
+        scene.add(terrainGroup);
+        
         // 工具模式：marker, line, area, none
         window.currentToolMode = 'none';
         window.measurePoints = [];
@@ -524,6 +559,22 @@
         
         // 切换工具模式
         window.setToolMode = (mode) => {
+            // 如果点击的是当前已选中的工具，则取消选择
+            if (window.currentToolMode === mode) {
+                window.currentToolMode = 'none';
+                window.measurePoints = [];
+                
+                // 更新按钮状态
+                document.querySelectorAll('.toolbar-btn').forEach(btn => btn.classList.remove('active'));
+                
+                // 清除旧的测量线和区域
+                clearMeasurements();
+                
+                // 更新信息显示
+                document.getElementById('measure-info').innerText = '选择工具开始测量';
+                return;
+            }
+            
             window.currentToolMode = mode;
             window.measurePoints = [];
             
@@ -711,6 +762,26 @@
             updateDetail();
         });
         document.getElementById('height-scale').addEventListener('input', updateHeight);
+        document.getElementById('skirt-depth').addEventListener('input', function() {
+            document.getElementById('skirt-depth-val').innerText = this.value;
+            // 重新构建地形以更新基座
+            if (heightData) {
+                const canvas = document.createElement('canvas');
+                canvas.width = rawWidth;
+                canvas.height = rawHeight;
+                const ctx = canvas.getContext('2d');
+                const imgData = ctx.createImageData(rawWidth, rawHeight);
+                for (let i = 0; i < heightData.length; i++) {
+                    const v = Math.floor(heightData[i]);
+                    imgData.data[i * 4] = v;
+                    imgData.data[i * 4 + 1] = v;
+                    imgData.data[i * 4 + 2] = v;
+                    imgData.data[i * 4 + 3] = 255;
+                }
+                ctx.putImageData(imgData, 0, 0);
+                buildTerrain(canvas);
+            }
+        });
         document.getElementById('render-mode-toggle').addEventListener('change', function() {
             isSmoothMode = this.checked;
             document.getElementById('render-mode-label').innerText = isSmoothMode ? '过渡色' : '分层设色';
@@ -722,7 +793,9 @@
         });
         document.getElementById('contour-spacing').addEventListener('input', function() {
             const sliderValue = parseFloat(this.value);
-            const actualSpacing = calculateActualContourSpacing(sliderValue);
+            // 对数变换：将0-100映射到1-50
+            const logValue = logarithmicTransform(sliderValue, 1, 50);
+            const actualSpacing = calculateActualContourSpacing(logValue);
             document.getElementById('contour-spacing-val').innerText = actualSpacing.toFixed(1);
             updateUniforms();
             updateContourLabels();
@@ -848,6 +921,10 @@
         // 导出功能
         document.getElementById('export-contours').addEventListener('click', exportContours);
         document.getElementById('export-hypsometric').addEventListener('click', exportHypsometric);
+        // 前往下载页面
+        document.getElementById('goto-download').addEventListener('click', () => {
+            window.location.href = 'Download.html';
+        });
         
         // 工具条按钮事件
         document.getElementById('tool-marker').addEventListener('click', () => setToolMode('marker'));
@@ -898,6 +975,101 @@
         });
 
         window.addEventListener('resize', onWindowResize);
+
+        // 检查URL参数，自动加载IndexedDB中的ZIP
+        const urlParams = new URLSearchParams(window.location.search);
+        const autoLoadParam = urlParams.get('autoLoad');
+        if (autoLoadParam === 'pending') {
+            // 等待数据就绪
+            waitForDataAndLoad();
+        } else if (autoLoadParam === '1') {
+            setTimeout(() => {
+                autoLoadFromIndexedDB();
+            }, 500);
+        }
+    }
+
+    // 等待数据就绪后自动加载
+    function waitForDataAndLoad() {
+        showImportStatus('等待数据准备...');
+        
+        let checkCount = 0;
+        const maxChecks = 120; // 最多等待60秒
+        
+        const checkInterval = setInterval(async () => {
+            checkCount++;
+            
+            const readyTime = localStorage.getItem('terrainZipReady');
+            if (readyTime) {
+                clearInterval(checkInterval);
+                localStorage.removeItem('terrainZipReady');
+                await autoLoadFromIndexedDB();
+            } else if (checkCount >= maxChecks) {
+                clearInterval(checkInterval);
+                showImportStatus('等待超时，请重试', true);
+            }
+        }, 500);
+    }
+
+    // 从IndexedDB自动加载ZIP
+    async function autoLoadFromIndexedDB() {
+        try {
+            const db = await openIndexedDB();
+            const data = await getZipFromIndexedDB(db);
+            
+            if (data && data.blob) {
+                showImportStatus('正在自动加载地形数据...');
+                
+                const zip = await JSZip.loadAsync(data.blob);
+                const files = [];
+                
+                const promises = [];
+                zip.forEach((relativePath, zipEntry) => {
+                    if (!zipEntry.dir) {
+                        promises.push(
+                            zipEntry.async('blob').then(blob => {
+                                return new File([blob], zipEntry.name, { type: blob.type });
+                            })
+                        );
+                    }
+                });
+                
+                const extractedFiles = await Promise.all(promises);
+                await processImportedFiles(extractedFiles);
+                
+                showImportStatus('地形数据加载完成！');
+                
+                // 清除URL参数
+                window.history.replaceState({}, document.title, window.location.pathname);
+            }
+        } catch (err) {
+            console.error('自动加载失败:', err);
+            showImportStatus('自动加载失败: ' + err.message, true);
+        }
+    }
+
+    function openIndexedDB() {
+        return new Promise((resolve, reject) => {
+            const request = indexedDB.open('TerrainSimDB', 1);
+            request.onerror = () => reject(request.error);
+            request.onsuccess = () => resolve(request.result);
+            request.onupgradeneeded = (event) => {
+                const db = event.target.result;
+                if (!db.objectStoreNames.contains('zipFiles')) {
+                    db.createObjectStore('zipFiles');
+                }
+            };
+        });
+    }
+
+    function getZipFromIndexedDB(db) {
+        return new Promise((resolve, reject) => {
+            const transaction = db.transaction(['zipFiles'], 'readonly');
+            const store = transaction.objectStore('zipFiles');
+            const request = store.get('latestZip');
+            request.onerror = () => reject(request.error);
+            request.onsuccess = () => resolve(request.result);
+        });
     }
 
     function updateSunPosition(elevationDegrees, azimuthDegrees) {
@@ -962,9 +1134,10 @@
             img.data[i+3] = 255;
         }
         ctx.putImageData(img, 0, 0);
-        // 初始生成地形时渲染精度设为90
+        // 初始生成地形时渲染精度设为90，高度系数设为1（使用默认值）
         document.getElementById('detail-scale').value = 90;
         document.getElementById('detail-val').innerText = '90';
+        // 高度系数保持默认值1（滑块值58对应范围0.01-30）
         buildTerrain(canvas);
     }
 
@@ -982,9 +1155,11 @@
                     const arrayBuffer = ev.target.result;
                     const tiff = await parseGeotiff(arrayBuffer);
                     if (tiff) {
-                        // 导入GeoTIFF时渲染精度设为360
+                        // 导入GeoTIFF时渲染精度设为360，高度系数设为0.3（滑块值43对应范围0.01-30）
                         document.getElementById('detail-scale').value = 360;
                         document.getElementById('detail-val').innerText = '360';
+                        document.getElementById('height-scale').value = 43;
+                        document.getElementById('height-val').innerText = '0.30x';
                         buildTerrainFromGeotiff(tiff);
                     } else {
                         alert('无法解析 GeoTIFF 文件');
@@ -1006,9 +1181,11 @@
                 canvas.width = img.width; canvas.height = img.height;
                 canvas.getContext('2d').drawImage(img, 0, 0);
                 if(type === 'height') {
-                    // 导入高度图时渲染精度设为360
+                    // 导入高度图时渲染精度设为360，高度系数设为0.3（滑块值43对应范围0.01-30）
                     document.getElementById('detail-scale').value = 360;
                     document.getElementById('detail-val').innerText = '360';
+                    document.getElementById('height-scale').value = 43;
+                    document.getElementById('height-val').innerText = '0.30x';
                     buildTerrain(canvas);
                 }
                 else {
@@ -1140,8 +1317,6 @@
             return;
         }
 
-        if(terrain) { scene.remove(terrain); geometry.dispose(); material.dispose(); }
-
         const segs = parseInt(document.getElementById('detail-scale').value);
         const aspectRatio = rawWidth / rawHeight;
         const terrainWidth = 200 * Math.sqrt(aspectRatio);
@@ -1150,10 +1325,14 @@
         geometry.rotateX(-Math.PI/2);
 
         const pos = geometry.attributes.position.array;
-        const heightScale = parseFloat(document.getElementById('height-scale').value);
+        const heightSliderValue = parseFloat(document.getElementById('height-scale').value);
+        const heightScale = logarithmicTransform(heightSliderValue, 0.01, 30);
+        // 更新高度系数显示值
+        document.getElementById('height-val').innerText = heightScale.toFixed(2) + 'x';
         const isSmooth = document.getElementById('render-mode-toggle').checked;
         const scaleMultiplier = isSmooth ? 0.5 : 0.3;
         let maxHeight = 0;
+        let minHeight = Infinity;
         
         const normalizeHeight = (value) => {
             const minVal = Math.min(...heightData);
@@ -1161,14 +1340,31 @@
             return (value - minVal) / (maxVal - minVal) * 255;
         };
         
+        // 清除terrainGroup中的所有子对象
+        while(terrainGroup.children.length > 0) {
+            const obj = terrainGroup.children[0];
+            if(obj.geometry) obj.geometry.dispose();
+            if(obj.material) {
+                if (Array.isArray(obj.material)) obj.material.forEach(m => m.dispose());
+                else obj.material.dispose();
+            }
+            terrainGroup.remove(obj);
+        }
+
         for(let i=0, j=0; i<pos.length; i+=3, j++) {
             const x = Math.floor((j % (segs + 1)) / segs * (rawWidth - 1));
             const y = Math.floor(Math.floor(j / (segs + 1)) / segs * (rawHeight - 1));
             const idx = y * rawWidth + x;
             pos[i+1] = heightData[idx] * scaleMultiplier * heightScale;
             if(pos[i+1] > maxHeight) maxHeight = pos[i+1];
+            if(pos[i+1] < minHeight) minHeight = pos[i+1];
         }
         geometry.computeVertexNormals();
+
+        // 自动计算最佳等高距（确保minHeight和maxHeight有效）
+        if (minHeight === Infinity) minHeight = 0;
+        if (maxHeight === 0) maxHeight = 1;
+        autoCalculateBestContourSpacing(minHeight, maxHeight);
 
         material = new THREE.MeshStandardMaterial({ roughness: 0.8, metalness: 0.1 });
         if(customTexture) material.map = customTexture;
@@ -1178,7 +1374,11 @@
 
         terrain = new THREE.Mesh(geometry, material);
         terrain.receiveShadow = terrain.castShadow = true;
-        scene.add(terrain);
+        terrainGroup.add(terrain);
+        
+        // 添加基座和方位标记
+        addBaseAndDirections(terrainWidth, terrainHeight, segs, heightScale, scaleMultiplier, maxHeight);
+        
         updateUniforms();
     }
 
@@ -1217,7 +1417,8 @@
         
         // 恢复等高线和等高距到初始状态
         document.getElementById('contour-toggle').checked = false;
-        document.getElementById('contour-spacing').value = 20;
+        // 等高距20对应滑块值77（对数变换范围1-50）
+        document.getElementById('contour-spacing').value = 77;
         document.getElementById('contour-spacing-val').innerText = '20.0';
         document.getElementById('contour-width').value = 1;
         document.getElementById('contour-width-val').innerText = '1.0';
@@ -1306,9 +1507,10 @@
         }
         
         ctx.putImageData(img, 0, 0);
-        // 生成随机地形时渲染精度设为90
+        // 生成随机地形时渲染精度设为90，高度系数保持默认值1
         document.getElementById('detail-scale').value = 90;
         document.getElementById('detail-val').innerText = '90';
+        // 高度系数保持默认值1（滑块值58对应范围0.01-30）
         buildTerrain(canvas);
         
         // 更新DEM信息显示
@@ -1346,7 +1548,17 @@
         const result = {
             demPng: null,
             demTxt: null,
-            satPng: null
+            satPng: null,
+            openmapPng: null,
+            mapPng: null,
+            satellitePng: null,
+            esriPng: null,
+            topoPng: null,
+            natgeoPng: null,
+            transportPng: null,
+            reliefPng: null,
+            osmPng: null,
+            gaodePng: null
         };
 
         for (const file of files) {
@@ -1358,6 +1570,26 @@
                 result.demTxt = file;
             } else if (name.includes('sat.png')) {
                 result.satPng = file;
+            } else if (name.includes('openmap.png')) {
+                result.openmapPng = file;
+            } else if (name.includes('map.png')) {
+                result.mapPng = file;
+            } else if (name.includes('satellite.png')) {
+                result.satellitePng = file;
+            } else if (name.includes('esri.png')) {
+                result.esriPng = file;
+            } else if (name.includes('topo.png')) {
+                result.topoPng = file;
+            } else if (name.includes('natgeo.png')) {
+                result.natgeoPng = file;
+            } else if (name.includes('transport.png')) {
+                result.transportPng = file;
+            } else if (name.includes('relief.png')) {
+                result.reliefPng = file;
+            } else if (name.includes('osm.png')) {
+                result.osmPng = file;
+            } else if (name.includes('gaode.png')) {
+                result.gaodePng = file;
             }
         }
 
@@ -1366,15 +1598,32 @@
 
     // 处理导入的文件
     async function processImportedFiles(files) {
-        const { demPng, demTxt, satPng } = findFilesInList(files);
+        const { demPng, demTxt, satPng, mapPng, openmapPng, satellitePng, esriPng, topoPng, natgeoPng, transportPng, reliefPng, osmPng, gaodePng } = findFilesInList(files);
         
         let loadedCount = 0;
         let messages = [];
         
-        // 导入数据时渲染精度设为360
+        // 存储所有纹理图
+        window.availableTextures = {};
+        if (satPng) window.availableTextures.sat = satPng;
+        if (openmapPng) window.availableTextures.openmap = openmapPng;
+        if (mapPng) window.availableTextures.map = mapPng;
+        if (satellitePng) window.availableTextures.satellite = satellitePng;
+        if (esriPng) window.availableTextures.esri = esriPng;
+        if (topoPng) window.availableTextures.topo = topoPng;
+        if (natgeoPng) window.availableTextures.natgeo = natgeoPng;
+        if (transportPng) window.availableTextures.transport = transportPng;
+        if (reliefPng) window.availableTextures.relief = reliefPng;
+        if (osmPng) window.availableTextures.osm = osmPng;
+        if (gaodePng) window.availableTextures.gaode = gaodePng;
+        
+        // 导入数据时渲染精度设为360，高度系数设为0.3
         if (demPng || demTxt) {
             document.getElementById('detail-scale').value = 360;
             document.getElementById('detail-val').innerText = '360';
+            // 导入时高度系数设为0.3（滑块值43对应范围0.01-30）
+            document.getElementById('height-scale').value = 43;
+            document.getElementById('height-val').innerText = '0.30x';
         }
         
         // 加载高度图 (dem.png)
@@ -1399,10 +1648,15 @@
             }
         }
         
-        // 加载纹理图 (sat.png)
-        if (satPng) {
+        // 自动处理纹理：如有纹理则套用，如无则清除
+        const textureKeys = Object.keys(window.availableTextures);
+        if (textureKeys.length > 0) {
+            // 有纹理图，自动套用第一个可用的纹理
+            const firstTextureKey = textureKeys[0];
+            const firstTextureFile = window.availableTextures[firstTextureKey];
+            
             try {
-                const url = URL.createObjectURL(satPng);
+                const url = URL.createObjectURL(firstTextureFile);
                 const loader = new THREE.TextureLoader();
                 loader.load(url, (tex) => {
                     tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
@@ -1416,6 +1670,12 @@
             } catch (err) {
                 console.error('加载纹理图失败:', err);
             }
+        } else {
+            // 无纹理图，自动清除纹理
+            customTexture = null;
+            rebuildMaterial();
+            document.getElementById('remove-texture').classList.add('hidden');
+            document.getElementById('texture-input').value = '';
         }
         
         // 加载高度数据 (dem.txt)
@@ -1445,6 +1705,14 @@
             }
         }
         
+        // 如果有纹理图，显示纹理切换控件
+        if (Object.keys(window.availableTextures).length > 0) {
+            showTextureSwitcher();
+        } else {
+            // 无纹理图时隐藏纹理切换控件
+            document.getElementById('texture-switcher').classList.add('hidden');
+        }
+        
         if (loadedCount > 0) {
             showImportStatus(`成功导入: ${messages.join(', ')}`);
         } else {
@@ -1453,7 +1721,7 @@
             showImportStatus('未找到匹配的文件', true);
         }
 
-        return { demPng, demTxt, satPng };
+        return { demPng, demTxt, satPng, openmapPng, mapPng };
     }
 
     // 处理ZIP文件导入
@@ -1634,13 +1902,187 @@
         e.target.value = '';
     }
 
+    // 辅助函数：创建方位标记贴图
+    function createDirectionTexture(text, color = '#ffffff') {
+        const canvas = document.createElement('canvas');
+        canvas.width = 128;
+        canvas.height = 128;
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, 128, 128);
+        ctx.font = 'bold 80px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = color;
+        ctx.fillText(text, 64, 64);
+        const texture = new THREE.CanvasTexture(canvas);
+        return texture;
+    }
+
+    // 添加基座和方位标记
+    function addBaseAndDirections(terrainWidth, terrainHeight, segs, heightScale, scaleMultiplier, maxHeight) {
+        const skirtDepth = parseFloat(document.getElementById('skirt-depth')?.value || 20);
+        const baseHeight = -skirtDepth;
+        const halfW = terrainWidth / 2;
+        const halfH = terrainHeight / 2;
+        
+        // 侧面材质
+        const sideMat = new THREE.MeshStandardMaterial({ 
+            color: 0x3a3a3a, 
+            roughness: 0.9, 
+            metalness: 0.1,
+            side: THREE.DoubleSide 
+        });
+
+        // 四壁几何数据
+        const skirtVertices = [];
+        const skirtIndices = [];
+        const skirtUvs = [];
+        
+        // 四条边的边缘高度采样
+        const edgeHeights = { top: [], bottom: [], left: [], right: [] };
+        
+        // 采样边缘高度
+        for (let i = 0; i <= segs; i++) {
+            const t = i / segs;
+            // 顶边 (z = -halfH)
+            const topIdx = i;
+            // 底边 (z = halfH)
+            const bottomIdx = segs * (segs + 1) + i;
+            // 左边 (x = -halfW)
+            const leftIdx = i * (segs + 1);
+            // 右边 (x = halfW)
+            const rightIdx = i * (segs + 1) + segs;
+            
+            edgeHeights.top.push(geometry.attributes.position.array[topIdx * 3 + 1]);
+            edgeHeights.bottom.push(geometry.attributes.position.array[bottomIdx * 3 + 1]);
+            edgeHeights.left.push(geometry.attributes.position.array[leftIdx * 3 + 1]);
+            edgeHeights.right.push(geometry.attributes.position.array[rightIdx * 3 + 1]);
+        }
+
+        let vertexOffset = 0;
+
+        // 前面 (z = -halfH)
+        for (let i = 0; i <= segs; i++) {
+            const x = -halfW + (terrainWidth * i / segs);
+            const topY = edgeHeights.top[i];
+            skirtVertices.push(x, topY, -halfH);
+            skirtVertices.push(x, baseHeight, -halfH);
+            skirtUvs.push(i / segs, 1);
+            skirtUvs.push(i / segs, 0);
+        }
+        for (let i = 0; i < segs; i++) {
+            skirtIndices.push(vertexOffset + i * 2, vertexOffset + i * 2 + 1, vertexOffset + i * 2 + 2);
+            skirtIndices.push(vertexOffset + i * 2 + 1, vertexOffset + i * 2 + 3, vertexOffset + i * 2 + 2);
+        }
+        vertexOffset += (segs + 1) * 2;
+
+        // 后面 (z = halfH)
+        for (let i = 0; i <= segs; i++) {
+            const x = halfW - (terrainWidth * i / segs);
+            const topY = edgeHeights.bottom[segs - i];
+            skirtVertices.push(x, topY, halfH);
+            skirtVertices.push(x, baseHeight, halfH);
+            skirtUvs.push(i / segs, 1);
+            skirtUvs.push(i / segs, 0);
+        }
+        for (let i = 0; i < segs; i++) {
+            skirtIndices.push(vertexOffset + i * 2, vertexOffset + i * 2 + 1, vertexOffset + i * 2 + 2);
+            skirtIndices.push(vertexOffset + i * 2 + 1, vertexOffset + i * 2 + 3, vertexOffset + i * 2 + 2);
+        }
+        vertexOffset += (segs + 1) * 2;
+
+        // 左面 (x = -halfW)
+        for (let i = 0; i <= segs; i++) {
+            const z = -halfH + (terrainHeight * i / segs);
+            const topY = edgeHeights.left[i];
+            skirtVertices.push(-halfW, topY, z);
+            skirtVertices.push(-halfW, baseHeight, z);
+            skirtUvs.push(i / segs, 1);
+            skirtUvs.push(i / segs, 0);
+        }
+        for (let i = 0; i < segs; i++) {
+            skirtIndices.push(vertexOffset + i * 2, vertexOffset + i * 2 + 1, vertexOffset + i * 2 + 2);
+            skirtIndices.push(vertexOffset + i * 2 + 1, vertexOffset + i * 2 + 3, vertexOffset + i * 2 + 2);
+        }
+        vertexOffset += (segs + 1) * 2;
+
+        // 右面 (x = halfW)
+        for (let i = 0; i <= segs; i++) {
+            const z = halfH - (terrainHeight * i / segs);
+            const topY = edgeHeights.right[segs - i];
+            skirtVertices.push(halfW, topY, z);
+            skirtVertices.push(halfW, baseHeight, z);
+            skirtUvs.push(i / segs, 1);
+            skirtUvs.push(i / segs, 0);
+        }
+        for (let i = 0; i < segs; i++) {
+            skirtIndices.push(vertexOffset + i * 2, vertexOffset + i * 2 + 1, vertexOffset + i * 2 + 2);
+            skirtIndices.push(vertexOffset + i * 2 + 1, vertexOffset + i * 2 + 3, vertexOffset + i * 2 + 2);
+        }
+
+        const skirtGeo = new THREE.BufferGeometry();
+        skirtGeo.setAttribute('position', new THREE.Float32BufferAttribute(skirtVertices, 3));
+        skirtGeo.setAttribute('uv', new THREE.Float32BufferAttribute(skirtUvs, 2));
+        skirtGeo.setIndex(skirtIndices);
+        skirtGeo.computeVertexNormals();
+
+        skirtMesh = new THREE.Mesh(skirtGeo, sideMat);
+        skirtMesh.receiveShadow = true;
+        skirtMesh.castShadow = true;
+        terrainGroup.add(skirtMesh);
+
+        // 底部
+        const bottomGeo = new THREE.PlaneBufferGeometry(terrainWidth, terrainHeight);
+        bottomGeo.rotateX(Math.PI / 2);
+        bottomGeo.translate(0, baseHeight, 0);
+        bottomMesh = new THREE.Mesh(bottomGeo, sideMat);
+        bottomMesh.receiveShadow = true;
+        terrainGroup.add(bottomMesh);
+
+        // 添加方位文字标记 (东、西、南、北)
+        const directions = [
+            { text: '北', pos: [0, baseHeight + 5, -halfH - 15], color: '#ef4444' },
+            { text: '南', pos: [0, baseHeight + 5, halfH + 15], color: '#ffffff' },
+            { text: '西', pos: [-halfW - 15, baseHeight + 5, 0], color: '#ffffff' },
+            { text: '东', pos: [halfW + 15, baseHeight + 5, 0], color: '#ffffff' }
+        ];
+
+        directions.forEach(d => {
+            const spriteMat = new THREE.SpriteMaterial({ 
+                map: createDirectionTexture(d.text, d.color), 
+                transparent: true 
+            });
+            const sprite = new THREE.Sprite(spriteMat);
+            sprite.position.set(...d.pos);
+            sprite.scale.set(12, 12, 1);
+            terrainGroup.add(sprite);
+            
+            // 添加一个辅助装饰线条
+            const lineGeo = new THREE.BufferGeometry().setFromPoints([
+                new THREE.Vector3(d.pos[0] * 0.9, baseHeight, d.pos[2] * 0.9),
+                new THREE.Vector3(d.pos[0] * 0.98, baseHeight, d.pos[2] * 0.98)
+            ]);
+            const line = new THREE.Line(lineGeo, new THREE.LineBasicMaterial({ color: 0x444444 }));
+            terrainGroup.add(line);
+        });
+    }
+
     function buildTerrain(canvas) {
         rawWidth = canvas.width; rawHeight = canvas.height;
         const data = canvas.getContext('2d').getImageData(0, 0, rawWidth, rawHeight).data;
         heightData = new Float32Array(rawWidth * rawHeight);
         for(let i=0; i<data.length; i+=4) heightData[i/4] = data[i];
 
-        if(terrain) { scene.remove(terrain); geometry.dispose(); material.dispose(); }
+        // 清除terrainGroup中的所有子对象
+        while(terrainGroup.children.length > 0) {
+            const obj = terrainGroup.children[0];
+            if(obj.geometry) obj.geometry.dispose();
+            if(obj.material) {
+                if (Array.isArray(obj.material)) obj.material.forEach(m => m.dispose());
+                else obj.material.dispose();
+            }
+            terrainGroup.remove(obj);
+        }
 
         const segs = parseInt(document.getElementById('detail-scale').value);
         const aspectRatio = rawWidth / rawHeight;
@@ -1650,7 +2092,10 @@
         geometry.rotateX(-Math.PI/2);
 
         const pos = geometry.attributes.position.array;
-        const heightScale = parseFloat(document.getElementById('height-scale').value);
+        const heightSliderValue = parseFloat(document.getElementById('height-scale').value);
+        const heightScale = logarithmicTransform(heightSliderValue, 0.01, 30);
+        // 更新高度系数显示值
+        document.getElementById('height-val').innerText = heightScale.toFixed(2) + 'x';
         const isSmooth = document.getElementById('render-mode-toggle').checked;
         const scaleMultiplier = isSmooth ? 0.5 : 0.3;
         let maxHeight = 0;
@@ -1665,7 +2110,9 @@
         }
         geometry.computeVertexNormals();
 
-        // 自动计算最佳等高距
+        // 自动计算最佳等高距（确保minHeight和maxHeight有效）
+        if (minHeight === Infinity) minHeight = 0;
+        if (maxHeight === 0) maxHeight = 1;
         autoCalculateBestContourSpacing(minHeight, maxHeight);
 
         material = new THREE.MeshStandardMaterial({ roughness: 0.8, metalness: 0.1 });
@@ -1742,7 +2189,10 @@
 
         terrain = new THREE.Mesh(geometry, material);
         terrain.receiveShadow = terrain.castShadow = true;
-        scene.add(terrain);
+        terrainGroup.add(terrain);
+        
+        // 添加基座和方位标记
+        addBaseAndDirections(terrainWidth, terrainHeight, segs, heightScale, scaleMultiplier, maxHeight);
         updateUniforms();
     }
 
@@ -1845,7 +2295,10 @@
         shader.uniforms.uSmooth.value = isSmoothMode ? 1.0 : 0.0;
         shader.uniforms.uShowContour.value = document.getElementById('contour-toggle').checked ? 1.0 : 0.0;
         shader.uniforms.uRemovePalette.value = document.getElementById('remove-palette-toggle').checked ? 1.0 : 0.0;
-        shader.uniforms.uContourSpacing.value = parseFloat(document.getElementById('contour-spacing').value);
+        // 等高距滑块值进行对数变换
+        const contourSliderValue = parseFloat(document.getElementById('contour-spacing').value);
+        const contourLogValue = logarithmicTransform(contourSliderValue, 1, 50);
+        shader.uniforms.uContourSpacing.value = contourLogValue;
         shader.uniforms.uContourWidth.value = parseFloat(document.getElementById('contour-width').value);
         if(shader.uniforms.uTextureOpacity) {
             shader.uniforms.uTextureOpacity.value = parseFloat(document.getElementById('texture-opacity').value) / 100;
@@ -1861,7 +2314,18 @@
     // 自动计算最佳等高距
     function autoCalculateBestContourSpacing(minHeight, maxHeight) {
         const diff = maxHeight - minHeight;
-        if (diff <= 0) return;
+        if (diff <= 0 || !isFinite(diff)) {
+            // 如果高度差为0、负数或无效，使用默认等高距20
+            const defaultValue = 20;
+            const elevationRange = (window.demInfo && window.demInfo.elevationRange) ? window.demInfo.elevationRange : 50;
+            const x = Math.max(1, Math.round(elevationRange / 50));
+            const logRangeValue = Math.max(1, defaultValue / x);
+            const sliderValue = inverseLogarithmicTransform(logRangeValue, 1, 50);
+            document.getElementById('contour-spacing').value = sliderValue;
+            document.getElementById('contour-spacing-val').innerText = defaultValue.toFixed(1);
+            updateUniforms();
+            return;
+        }
         
         // 计算理想的等高距（约12条等高线）
         let ideal = diff / 12;
@@ -1884,12 +2348,16 @@
         
         // 转换为滑块值（考虑DEM高差）
         const elevationRange = (window.demInfo && window.demInfo.elevationRange) ? window.demInfo.elevationRange : 50;
-        const x = Math.round(elevationRange / 50);
-        const sliderValue = step / x;
+        const x = Math.max(1, Math.round(elevationRange / 50));
+        const actualValue = step; // 实际等高距
+        const logRangeValue = Math.max(1, actualValue / x); // 基础等高距
+        
+        // 使用反向对数变换将基础等高距映射回滑块值（范围0-100）
+        const sliderValue = inverseLogarithmicTransform(logRangeValue, 1, 50);
         
         // 更新UI
         document.getElementById('contour-spacing').value = sliderValue;
-        document.getElementById('contour-spacing-val').innerText = sliderValue.toFixed(1);
+        document.getElementById('contour-spacing-val').innerText = actualValue.toFixed(1);
         
         // 更新uniforms
         updateUniforms();
@@ -1899,7 +2367,7 @@
     function calculateActualContourSpacing(sliderValue) {
         // 获取导入的DEM高差，如果没有则使用默认值50
         const elevationRange = (window.demInfo && window.demInfo.elevationRange) ? window.demInfo.elevationRange : 50;
-        const x = Math.round(elevationRange / 50);
+        const x = Math.max(1, Math.round(elevationRange / 50));
         return sliderValue * x;
     }
 
@@ -1907,7 +2375,7 @@
     function calculateActualContourLevel(contourLevel) {
         const elevationRange = (window.demInfo && window.demInfo.elevationRange) ? window.demInfo.elevationRange : 50;
         const minElevation = (window.demInfo && window.demInfo.min) ? window.demInfo.min : 0;
-        const x = Math.round(elevationRange / 50);
+        const x = Math.max(1, Math.round(elevationRange / 50));
         return contourLevel * x + minElevation;
     }
 
@@ -1990,7 +2458,8 @@
         contourLabelsGroup = new THREE.Group();
 
         const sliderValue = parseFloat(document.getElementById('contour-spacing').value);
-        const actualContourSpacing = calculateActualContourSpacing(sliderValue);
+        const logValue = logarithmicTransform(sliderValue, 1, 50);
+        const actualContourSpacing = calculateActualContourSpacing(logValue);
         const segs = parseInt(document.getElementById('detail-scale').value);
         const pos = terrain.geometry.attributes.position.array;
 
@@ -2253,9 +2722,13 @@
         document.getElementById('detail-scale').value = detailScale;
         document.getElementById('base-color').value = baseColor;
         document.getElementById('contour-color').value = contourColor;
-        document.getElementById('height-scale').value = heightScale;
+        // heightScale是实际值，使用反向对数变换将实际值映射回滑块值
+        const heightSliderValue = inverseLogarithmicTransform(heightScale, 0.01, 30);
+        document.getElementById('height-scale').value = heightSliderValue;
         document.getElementById('contour-width').value = contourWidth;
-        document.getElementById('contour-spacing').value = contourSpacing;
+        // contourSpacing是实际值，使用反向对数变换将实际值映射回滑块值
+        const contourSliderValue = inverseLogarithmicTransform(contourSpacing, 1, 50);
+        document.getElementById('contour-spacing').value = contourSliderValue;
         document.getElementById('contour-toggle').checked = contourToggle;
         document.getElementById('contour-labels-toggle').checked = contourLabelsToggle;
         document.getElementById('remove-palette-toggle').checked = removePaletteToggle;
@@ -2263,7 +2736,8 @@
         // 更新显示值
         document.getElementById('detail-val').innerText = detailScale;
         document.getElementById('contour-width-val').innerText = contourWidth;
-        document.getElementById('contour-spacing-val').innerText = contourSpacing;
+        document.getElementById('contour-spacing-val').innerText = contourSpacing.toFixed(1);
+        document.getElementById('height-val').innerText = heightScale.toFixed(2) + 'x';
         
         // 只更新uniforms和高度，不重新构建地形
         updateUniforms();
@@ -2288,9 +2762,13 @@
         const originalBaseColor = document.getElementById('base-color').value;
         const originalContourColor = document.getElementById('contour-color').value;
         const originalDetailScale = document.getElementById('detail-scale').value;
-        const originalHeightScale = document.getElementById('height-scale').value;
+        // 保存实际高度系数（对数变换后的值）
+        const originalHeightSliderValue = parseFloat(document.getElementById('height-scale').value);
+        const originalHeightScale = logarithmicTransform(originalHeightSliderValue, 0.01, 30);
         const originalContourWidth = document.getElementById('contour-width').value;
-        const originalContourSpacing = document.getElementById('contour-spacing').value;
+        // 保存实际等高距（对数变换后的值）
+        const originalContourSliderValue = parseFloat(document.getElementById('contour-spacing').value);
+        const originalContourSpacing = logarithmicTransform(originalContourSliderValue, 1, 50);
         const originalContourToggle = document.getElementById('contour-toggle').checked;
         const originalContourLabelsToggle = document.getElementById('contour-labels-toggle').checked;
         const originalRemovePaletteToggle = document.getElementById('remove-palette-toggle').checked;
@@ -2299,9 +2777,11 @@
         document.getElementById('detail-scale').value = 90;
         document.getElementById('base-color').value = '#ffffff';
         document.getElementById('contour-color').value = '#000000';
+        // 高度系数0对应滑块值0（对数变换后接近0.01）
         document.getElementById('height-scale').value = 0;
         document.getElementById('contour-width').value = 3;
-        document.getElementById('contour-spacing').value = 10;
+        // 等高距10对应滑块值59（对数变换范围1-50）
+        document.getElementById('contour-spacing').value = 59;
         document.getElementById('contour-toggle').checked = true;
         document.getElementById('contour-labels-toggle').checked = true;
         document.getElementById('remove-palette-toggle').checked = true;
@@ -2350,7 +2830,8 @@
     function generateSvgContent() {
         return new Promise((resolve) => {
             const sliderValue = parseFloat(document.getElementById('contour-spacing').value);
-            const actualContourSpacing = calculateActualContourSpacing(sliderValue);
+            const logValue = logarithmicTransform(sliderValue, 1, 50);
+            const actualContourSpacing = calculateActualContourSpacing(logValue);
 
             const gridWidth = rawWidth;
             const gridHeight = rawHeight;
@@ -2451,6 +2932,9 @@
             const originalTerrain = terrain;
             const originalGeometry = geometry;
             const originalMaterial = material;
+            
+            // 保存原始terrainGroup的子对象
+            const originalChildren = [...terrainGroup.children];
 
             buildTerrain(canvas);
 
@@ -2504,19 +2988,25 @@
 
                 const dataURL = renderer.domElement.toDataURL('image/png');
 
-                if(terrain) {
-                    scene.remove(terrain);
+                // 清除当前terrainGroup的子对象
+                while(terrainGroup.children.length > 0) {
+                    const obj = terrainGroup.children[0];
+                    if(obj.geometry && obj !== originalTerrain) obj.geometry.dispose();
+                    if(obj.material && obj !== originalTerrain) {
+                        if (Array.isArray(obj.material)) obj.material.forEach(m => m.dispose());
+                        else obj.material.dispose();
+                    }
+                    terrainGroup.remove(obj);
                 }
-                if(originalGeometry) {
-                    originalGeometry.dispose();
-                }
-                if(originalMaterial) {
-                    originalMaterial.dispose();
-                }
+                
+                // 恢复原始子对象
+                originalChildren.forEach(child => {
+                    terrainGroup.add(child);
+                });
+                
                 terrain = originalTerrain;
                 geometry = originalGeometry;
                 material = originalMaterial;
-                scene.add(terrain);
 
                 renderer.setSize(originalRendererSize.width, originalRendererSize.height);
                 camera.aspect = originalCameraAspect;
@@ -3250,10 +3740,27 @@
     }
 
     function updateHeight() {
-        if(!terrain) return;
-        const val = parseFloat(this.value);
-        terrain.scale.y = val;
-        document.getElementById('height-val').innerText = val.toFixed(1) + 'x';
+        if(!terrain || !heightData) return;
+        const sliderValue = parseFloat(this.value);
+        // 对数变换：将0-100映射到0.01-30
+        const val = logarithmicTransform(sliderValue, 0.01, 30);
+        document.getElementById('height-val').innerText = val.toFixed(2) + 'x';
+        
+        // 重新构建地形以更新基座和方位标记
+        const canvas = document.createElement('canvas');
+        canvas.width = rawWidth;
+        canvas.height = rawHeight;
+        const ctx = canvas.getContext('2d');
+        const imgData = ctx.createImageData(rawWidth, rawHeight);
+        for (let i = 0; i < heightData.length; i++) {
+            const v = Math.floor(heightData[i]);
+            imgData.data[i * 4] = v;
+            imgData.data[i * 4 + 1] = v;
+            imgData.data[i * 4 + 2] = v;
+            imgData.data[i * 4 + 3] = 255;
+        }
+        ctx.putImageData(imgData, 0, 0);
+        buildTerrain(canvas);
     }
 
     function updateDetail() {
@@ -3271,6 +3778,29 @@
         }
         ctx.putImageData(img, 0, 0);
         buildTerrain(canvas);
+    }
+
+    // 对数变换函数：将滑块值(0-100)映射到实际值(min-max)
+    function logarithmicTransform(sliderValue, minVal, maxVal) {
+        if (sliderValue <= 0) return minVal;
+        if (sliderValue >= 100) return maxVal;
+        // 使用对数变换，让小的值更容易调节
+        const t = sliderValue / 100;
+        const logMin = Math.log(minVal);
+        const logMax = Math.log(maxVal);
+        const logVal = logMin + t * (logMax - logMin);
+        return Math.exp(logVal);
+    }
+
+    // 反向对数变换：将实际值映射回滑块值(0-100)
+    function inverseLogarithmicTransform(actualValue, minVal, maxVal) {
+        if (actualValue <= minVal) return 0;
+        if (actualValue >= maxVal) return 100;
+        const logMin = Math.log(minVal);
+        const logMax = Math.log(maxVal);
+        const logVal = Math.log(actualValue);
+        const t = (logVal - logMin) / (logMax - logMin);
+        return t * 100;
     }
 
     function applyCustomPalette() {
@@ -3453,6 +3983,68 @@
         }
         
         renderer.render(scene, camera);
+    }
+
+    // 显示纹理切换控件
+    function showTextureSwitcher() {
+        const switcher = document.getElementById('texture-switcher');
+        const buttons = switcher.querySelectorAll('.texture-btn');
+        
+        // 只显示可用的纹理按钮
+        buttons.forEach(btn => {
+            const textureType = btn.getAttribute('data-texture');
+            if (window.availableTextures[textureType]) {
+                btn.classList.remove('hidden');
+            } else {
+                btn.classList.add('hidden');
+            }
+        });
+        
+        // 设置第一个可用的纹理按钮为active状态
+        const textureKeys = Object.keys(window.availableTextures);
+        if (textureKeys.length > 0) {
+            const firstTextureKey = textureKeys[0];
+            buttons.forEach(btn => {
+                if (btn.getAttribute('data-texture') === firstTextureKey) {
+                    btn.classList.add('active');
+                } else {
+                    btn.classList.remove('active');
+                }
+            });
+        }
+        
+        switcher.classList.remove('hidden');
+        
+        // 绑定点击事件
+        buttons.forEach(btn => {
+            btn.addEventListener('click', () => {
+                const textureType = btn.getAttribute('data-texture');
+                switchTexture(textureType);
+                
+                // 更新按钮状态
+                buttons.forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+            });
+        });
+    }
+
+    // 切换纹理
+    function switchTexture(textureType) {
+        const textureFile = window.availableTextures[textureType];
+        if (!textureFile) return;
+        
+        try {
+            const url = URL.createObjectURL(textureFile);
+            const loader = new THREE.TextureLoader();
+            loader.load(url, (tex) => {
+                tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+                customTexture = tex;
+                rebuildMaterial();
+                URL.revokeObjectURL(url);
+            });
+        } catch (err) {
+            console.error('加载纹理失败:', err);
+        }
     }
 </script>
 </body>
