@@ -1318,9 +1318,38 @@
         }
 
         const segs = parseInt(document.getElementById('detail-scale').value);
-        const aspectRatio = rawWidth / rawHeight;
-        const terrainWidth = 200 * Math.sqrt(aspectRatio);
-        const terrainHeight = 200 / Math.sqrt(aspectRatio);
+        
+        // 根据经纬度计算真实地形尺寸
+        let terrainWidth, terrainHeight;
+        const demInfo = window.demInfo;
+        
+        if (demInfo && demInfo.north !== null && demInfo.south !== null && 
+            demInfo.east !== null && demInfo.west !== null) {
+            // 有经纬度信息，计算真实尺寸
+            const avgLat = (demInfo.north + demInfo.south) / 2;
+            const latDiff = Math.abs(demInfo.north - demInfo.south);
+            const lonDiff = Math.abs(demInfo.east - demInfo.west);
+            
+            // 东西长度（纬线长度）= 经度差 × 111km × cos(纬度)
+            const realWidthMeters = lonDiff * 111000 * Math.cos(avgLat * Math.PI / 180);
+            // 南北长度（经线长度）= 纬度差 × 111km
+            const realHeightMeters = latDiff * 111000;
+            
+            // 缩放到合适的显示尺寸（保持真实比例）
+            const maxDisplaySize = 300;
+            const scaleFactor = maxDisplaySize / Math.max(realWidthMeters, realHeightMeters);
+            terrainWidth = realWidthMeters * scaleFactor;
+            terrainHeight = realHeightMeters * scaleFactor;
+            
+            console.log(`真实尺寸: ${realWidthMeters.toFixed(0)}m x ${realHeightMeters.toFixed(0)}m`);
+            console.log(`显示尺寸: ${terrainWidth.toFixed(1)} x ${terrainHeight.toFixed(1)}`);
+        } else {
+            // 无经纬度信息，使用原始比例
+            const aspectRatio = rawWidth / rawHeight;
+            terrainWidth = 200 * Math.sqrt(aspectRatio);
+            terrainHeight = 200 / Math.sqrt(aspectRatio);
+        }
+        
         geometry = new THREE.PlaneBufferGeometry(terrainWidth, terrainHeight, segs, segs);
         geometry.rotateX(-Math.PI/2);
 
@@ -1626,6 +1655,20 @@
             document.getElementById('height-val').innerText = '0.30x';
         }
         
+        // 先加载高度数据 (dem.txt)，因为buildTerrain需要经纬度信息
+        if (demTxt) {
+            try {
+                const text = await demTxt.text();
+                const info = parseDemTxtContent(text);
+                window.demInfo = info;
+                displayDemInfo(info);
+                loadedCount++;
+                messages.push('高度数据');
+            } catch (err) {
+                console.error('加载高度数据失败:', err);
+            }
+        }
+        
         // 加载高度图 (dem.png)
         if (demPng) {
             try {
@@ -1676,33 +1719,6 @@
             rebuildMaterial();
             document.getElementById('remove-texture').classList.add('hidden');
             document.getElementById('texture-input').value = '';
-        }
-        
-        // 加载高度数据 (dem.txt)
-        if (demTxt) {
-            try {
-                const text = await demTxt.text();
-                // 解析DEM统计信息
-                const info = parseDemTxtContent(text);
-                window.demInfo = info;
-                displayDemInfo(info);
-                loadedCount++;
-                messages.push('高度数据');
-                
-                // 如果已经加载了高度图，重新计算最佳等高距
-                if (heightData && terrain) {
-                    const pos = geometry.attributes.position.array;
-                    let maxHeight = 0;
-                    let minHeight = Infinity;
-                    for(let i=1; i<pos.length; i+=3) {
-                        if(pos[i] > maxHeight) maxHeight = pos[i];
-                        if(pos[i] < minHeight) minHeight = pos[i];
-                    }
-                    autoCalculateBestContourSpacing(minHeight, maxHeight);
-                }
-            } catch (err) {
-                console.error('加载高度数据失败:', err);
-            }
         }
         
         // 如果有纹理图，显示纹理切换控件
@@ -1858,12 +1874,22 @@
             html += `<div class="text-orange-300">高差: ${info.elevationRange.toFixed(2)}m</div>`;
         }
         if (info.width && info.height) {
-            html += `<div class="text-orange-300">尺寸: ${info.width} x ${info.height}</div>`;
+            html += `<div class="text-orange-300">像素: ${info.width} x ${info.height}</div>`;
         }
         if (info.north !== null && info.south !== null && info.east !== null && info.west !== null) {
             html += `<div class="mt-1 text-orange-500">坐标范围:</div>`;
             html += `<div class="text-orange-300">N:${info.north.toFixed(4)} S:${info.south.toFixed(4)}</div>`;
             html += `<div class="text-orange-300">E:${info.east.toFixed(4)} W:${info.west.toFixed(4)}</div>`;
+            
+            // 计算真实尺寸
+            const avgLat = (info.north + info.south) / 2;
+            const latDiff = Math.abs(info.north - info.south);
+            const lonDiff = Math.abs(info.east - info.west);
+            const realWidthKm = (lonDiff * 111 * Math.cos(avgLat * Math.PI / 180)).toFixed(1);
+            const realHeightKm = (latDiff * 111).toFixed(1);
+            html += `<div class="mt-1 text-orange-500">真实尺寸:</div>`;
+            html += `<div class="text-orange-300">东西: ${realWidthKm} km</div>`;
+            html += `<div class="text-orange-300">南北: ${realHeightKm} km</div>`;
         }
 
         displayEl.innerHTML = html;
@@ -2085,9 +2111,38 @@
         }
 
         const segs = parseInt(document.getElementById('detail-scale').value);
-        const aspectRatio = rawWidth / rawHeight;
-        const terrainWidth = 200 * Math.sqrt(aspectRatio);
-        const terrainHeight = 200 / Math.sqrt(aspectRatio);
+        
+        // 根据经纬度计算真实地形尺寸
+        let terrainWidth, terrainHeight;
+        const demInfo = window.demInfo;
+        
+        if (demInfo && demInfo.north !== null && demInfo.south !== null && 
+            demInfo.east !== null && demInfo.west !== null) {
+            // 有经纬度信息，计算真实尺寸
+            const avgLat = (demInfo.north + demInfo.south) / 2;
+            const latDiff = Math.abs(demInfo.north - demInfo.south);
+            const lonDiff = Math.abs(demInfo.east - demInfo.west);
+            
+            // 东西长度（纬线长度）= 经度差 × 111km × cos(纬度)
+            const realWidthMeters = lonDiff * 111000 * Math.cos(avgLat * Math.PI / 180);
+            // 南北长度（经线长度）= 纬度差 × 111km
+            const realHeightMeters = latDiff * 111000;
+            
+            // 缩放到合适的显示尺寸（保持真实比例）
+            const maxDisplaySize = 300;
+            const scaleFactor = maxDisplaySize / Math.max(realWidthMeters, realHeightMeters);
+            terrainWidth = realWidthMeters * scaleFactor;
+            terrainHeight = realHeightMeters * scaleFactor;
+            
+            console.log(`真实尺寸: ${realWidthMeters.toFixed(0)}m x ${realHeightMeters.toFixed(0)}m`);
+            console.log(`显示尺寸: ${terrainWidth.toFixed(1)} x ${terrainHeight.toFixed(1)}`);
+        } else {
+            // 无经纬度信息，使用原始比例
+            const aspectRatio = rawWidth / rawHeight;
+            terrainWidth = 200 * Math.sqrt(aspectRatio);
+            terrainHeight = 200 / Math.sqrt(aspectRatio);
+        }
+        
         geometry = new THREE.PlaneBufferGeometry(terrainWidth, terrainHeight, segs, segs);
         geometry.rotateX(-Math.PI/2);
 
