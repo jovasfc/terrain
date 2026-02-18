@@ -187,6 +187,19 @@
 </head>
 <body>
 
+<!-- 数据加载进度弹窗 -->
+<div id="loading-modal" class="fixed inset-0 bg-black/80 z-[9999] hidden flex items-center justify-center">
+    <div class="bg-zinc-900 rounded-2xl p-8 max-w-sm w-full mx-4 text-center border border-zinc-700 shadow-2xl">
+        <div class="animate-spin rounded-full h-16 w-16 border-4 border-blue-500 border-t-transparent mx-auto mb-6"></div>
+        <h3 class="text-xl font-bold text-white mb-2" id="loading-title">等待数据</h3>
+        <p class="text-zinc-400 text-sm mb-4" id="loading-message">正在等待下载页面传输数据...</p>
+        <div class="w-full bg-zinc-800 rounded-full h-2 mb-2">
+            <div id="loading-progress" class="bg-blue-500 h-2 rounded-full transition-all duration-300" style="width: 0%"></div>
+        </div>
+        <p class="text-zinc-500 text-xs" id="loading-status">请勿关闭此页面</p>
+    </div>
+</div>
+
 <!-- 浮动工具条 -->
 <div class="floating-toolbar" id="toolbar">
     <button class="toolbar-toggle" id="toolbar-toggle-btn">🔧</button>
@@ -666,7 +679,20 @@
                         if (window.measurePoints.length === 2) {
                             const p1 = window.measurePoints[0];
                             const p2 = window.measurePoints[1];
-                            const distance = p1.distanceTo(p2);
+                            
+                            // 计算真实距离
+                            let distanceText;
+                            if (window.terrainRealSize) {
+                                const realDistance = calculateRealDistance(p1, p2);
+                                if (realDistance >= 1000) {
+                                    distanceText = `距离: ${(realDistance / 1000).toFixed(2)} km`;
+                                } else {
+                                    distanceText = `距离: ${realDistance.toFixed(1)} m`;
+                                }
+                            } else {
+                                const distance = p1.distanceTo(p2);
+                                distanceText = `距离: ${distance.toFixed(2)}m (无经纬度)`;
+                            }
                             
                             // 创建测量线
                             const lineGeometry = new THREE.BufferGeometry().setFromPoints([p1, p2]);
@@ -676,7 +702,7 @@
                             window.measureLines.push(line);
                             
                             // 更新信息显示
-                            document.getElementById('measure-info').innerText = `距离: ${distance.toFixed(2)}m`;
+                            document.getElementById('measure-info').innerText = distanceText;
                             
                             window.measurePoints = [];
                         }
@@ -694,7 +720,20 @@
                         if (window.measurePoints.length >= 3) {
                             // 计算多边形面积（投影到XZ平面）
                             const points = window.measurePoints.map(p => new THREE.Vector2(p.x, p.z));
-                            const area = calculatePolygonArea(points);
+                            
+                            // 计算真实面积
+                            let areaText;
+                            if (window.terrainRealSize) {
+                                const realArea = calculateRealArea(points);
+                                if (realArea >= 1000000) {
+                                    areaText = `面积: ${(realArea / 1000000).toFixed(2)} km²`;
+                                } else {
+                                    areaText = `面积: ${realArea.toFixed(1)} m²`;
+                                }
+                            } else {
+                                const area = calculatePolygonArea(points);
+                                areaText = `面积: ${area.toFixed(2)}m² (无经纬度)`;
+                            }
                             
                             // 创建多边形
                             const shape = new THREE.Shape();
@@ -718,7 +757,7 @@
                             window.measureAreas.push(mesh);
                             
                             // 更新信息显示
-                            document.getElementById('measure-info').innerText = `面积: ${area.toFixed(2)}m²`;
+                            document.getElementById('measure-info').innerText = areaText;
                             
                             window.measurePoints = [];
                         }
@@ -726,6 +765,40 @@
                 }
             }
         });
+        
+        // 计算真实距离（考虑经纬度）
+        function calculateRealDistance(p1, p2) {
+            if (!window.terrainRealSize) return p1.distanceTo(p2);
+            
+            const size = window.terrainRealSize;
+            
+            // 计算X方向（东西）和Z方向（南北）的显示距离
+            const dx = Math.abs(p2.x - p1.x);
+            const dz = Math.abs(p2.z - p1.z);
+            
+            // 转换为真实距离
+            const realDx = (dx / size.displayWidth) * size.realWidthMeters;
+            const realDz = (dz / size.displayHeight) * size.realHeightMeters;
+            
+            // 使用勾股定理计算真实距离
+            return Math.sqrt(realDx * realDx + realDz * realDz);
+        }
+        
+        // 计算真实面积（考虑经纬度）
+        function calculateRealArea(points) {
+            if (!window.terrainRealSize) return calculatePolygonArea(points);
+            
+            const size = window.terrainRealSize;
+            
+            // 将显示坐标转换为真实坐标
+            const realPoints = points.map(p => ({
+                x: (p.x / size.displayWidth) * size.realWidthMeters,
+                y: (p.y / size.displayHeight) * size.realHeightMeters
+            }));
+            
+            // 使用鞋带公式计算面积
+            return calculatePolygonArea(realPoints);
+        }
         
         // 计算多边形面积（使用鞋带公式）
         function calculatePolygonArea(points) {
@@ -983,6 +1056,13 @@
             // 等待数据就绪
             waitForDataAndLoad();
         } else if (autoLoadParam === '1') {
+            // 直接加载已有数据
+            const modal = document.getElementById('loading-modal');
+            const progress = document.getElementById('loading-progress');
+            const status = document.getElementById('loading-status');
+            modal.classList.remove('hidden');
+            progress.style.width = '50%';
+            status.textContent = '正在加载地形数据...';
             setTimeout(() => {
                 autoLoadFromIndexedDB();
             }, 500);
@@ -991,34 +1071,68 @@
 
     // 等待数据就绪后自动加载
     function waitForDataAndLoad() {
-        showImportStatus('等待数据准备...');
+        const modal = document.getElementById('loading-modal');
+        const progress = document.getElementById('loading-progress');
+        const message = document.getElementById('loading-message');
+        const status = document.getElementById('loading-status');
+        
+        modal.classList.remove('hidden');
         
         let checkCount = 0;
-        const maxChecks = 120; // 最多等待60秒
+        const maxChecks = 120;
         
         const checkInterval = setInterval(async () => {
             checkCount++;
             
+            const progressPercent = Math.min((checkCount / maxChecks) * 80, 80);
+            progress.style.width = progressPercent + '%';
+            message.textContent = `正在等待下载页面传输数据... (${checkCount}/${maxChecks})`;
+            
             const readyTime = localStorage.getItem('terrainZipReady');
             if (readyTime) {
                 clearInterval(checkInterval);
+                progress.style.width = '90%';
+                message.textContent = '数据已就绪，正在加载...';
+                status.textContent = '正在解析地形数据';
                 localStorage.removeItem('terrainZipReady');
                 await autoLoadFromIndexedDB();
             } else if (checkCount >= maxChecks) {
                 clearInterval(checkInterval);
-                showImportStatus('等待超时，请重试', true);
+                document.getElementById('loading-title').textContent = '等待超时';
+                message.textContent = '未收到数据，请重试';
+                status.textContent = '即将关闭...';
+                progress.style.width = '100%';
+                progress.classList.remove('bg-blue-500');
+                progress.classList.add('bg-red-500');
+                setTimeout(() => {
+                    modal.classList.add('hidden');
+                    progress.classList.remove('bg-red-500');
+                    progress.classList.add('bg-blue-500');
+                }, 2000);
             }
         }, 500);
     }
 
     // 从IndexedDB自动加载ZIP
     async function autoLoadFromIndexedDB() {
+        const modal = document.getElementById('loading-modal');
+        const progress = document.getElementById('loading-progress');
+        const message = document.getElementById('loading-message');
+        const status = document.getElementById('loading-status');
+        
         try {
+            status.textContent = '正在连接数据库...';
+            progress.style.width = '92%';
+            
             const db = await openIndexedDB();
+            status.textContent = '正在读取数据...';
+            progress.style.width = '95%';
+            
             const data = await getZipFromIndexedDB(db);
             
             if (data && data.blob) {
-                showImportStatus('正在自动加载地形数据...');
+                status.textContent = '正在解压文件...';
+                progress.style.width = '97%';
                 
                 const zip = await JSZip.loadAsync(data.blob);
                 const files = [];
@@ -1035,16 +1149,39 @@
                 });
                 
                 const extractedFiles = await Promise.all(promises);
+                
+                progress.style.width = '99%';
+                status.textContent = '正在渲染地形...';
+                
                 await processImportedFiles(extractedFiles);
                 
-                showImportStatus('地形数据加载完成！');
+                progress.style.width = '100%';
+                document.getElementById('loading-title').textContent = '加载完成';
+                message.textContent = '地形数据已成功加载';
+                status.textContent = '正在关闭...';
                 
-                // 清除URL参数
+                setTimeout(() => {
+                    modal.classList.add('hidden');
+                    document.getElementById('loading-title').textContent = '等待数据';
+                    progress.style.width = '0%';
+                }, 1000);
+                
                 window.history.replaceState({}, document.title, window.location.pathname);
             }
         } catch (err) {
             console.error('自动加载失败:', err);
-            showImportStatus('自动加载失败: ' + err.message, true);
+            document.getElementById('loading-title').textContent = '加载失败';
+            message.textContent = '错误: ' + err.message;
+            status.textContent = '即将关闭...';
+            progress.classList.remove('bg-blue-500');
+            progress.classList.add('bg-red-500');
+            
+            setTimeout(() => {
+                modal.classList.add('hidden');
+                document.getElementById('loading-title').textContent = '等待数据';
+                progress.classList.remove('bg-red-500');
+                progress.classList.add('bg-blue-500');
+            }, 2000);
         }
     }
 
@@ -1341,6 +1478,19 @@
             terrainWidth = realWidthMeters * scaleFactor;
             terrainHeight = realHeightMeters * scaleFactor;
             
+            // 存储真实尺寸信息供测量使用
+            window.terrainRealSize = {
+                realWidthMeters: realWidthMeters,
+                realHeightMeters: realHeightMeters,
+                displayWidth: terrainWidth,
+                displayHeight: terrainHeight,
+                avgLat: avgLat,
+                north: demInfo.north,
+                south: demInfo.south,
+                east: demInfo.east,
+                west: demInfo.west
+            };
+            
             console.log(`真实尺寸: ${realWidthMeters.toFixed(0)}m x ${realHeightMeters.toFixed(0)}m`);
             console.log(`显示尺寸: ${terrainWidth.toFixed(1)} x ${terrainHeight.toFixed(1)}`);
         } else {
@@ -1348,6 +1498,9 @@
             const aspectRatio = rawWidth / rawHeight;
             terrainWidth = 200 * Math.sqrt(aspectRatio);
             terrainHeight = 200 / Math.sqrt(aspectRatio);
+            
+            // 清除真实尺寸信息
+            window.terrainRealSize = null;
         }
         
         geometry = new THREE.PlaneBufferGeometry(terrainWidth, terrainHeight, segs, segs);
@@ -1436,6 +1589,7 @@
     function generateRandomTerrain() {
         // 清除导入的DEM数据
         window.demInfo = null;
+        window.terrainRealSize = null;
         
         // 清除DEM信息显示
         const displayEl = document.getElementById('dem-info-display');
@@ -2134,6 +2288,19 @@
             terrainWidth = realWidthMeters * scaleFactor;
             terrainHeight = realHeightMeters * scaleFactor;
             
+            // 存储真实尺寸信息供测量使用
+            window.terrainRealSize = {
+                realWidthMeters: realWidthMeters,
+                realHeightMeters: realHeightMeters,
+                displayWidth: terrainWidth,
+                displayHeight: terrainHeight,
+                avgLat: avgLat,
+                north: demInfo.north,
+                south: demInfo.south,
+                east: demInfo.east,
+                west: demInfo.west
+            };
+            
             console.log(`真实尺寸: ${realWidthMeters.toFixed(0)}m x ${realHeightMeters.toFixed(0)}m`);
             console.log(`显示尺寸: ${terrainWidth.toFixed(1)} x ${terrainHeight.toFixed(1)}`);
         } else {
@@ -2141,6 +2308,9 @@
             const aspectRatio = rawWidth / rawHeight;
             terrainWidth = 200 * Math.sqrt(aspectRatio);
             terrainHeight = 200 / Math.sqrt(aspectRatio);
+            
+            // 清除真实尺寸信息
+            window.terrainRealSize = null;
         }
         
         geometry = new THREE.PlaneBufferGeometry(terrainWidth, terrainHeight, segs, segs);
