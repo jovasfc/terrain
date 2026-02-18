@@ -569,6 +569,7 @@
         window.measurePoints = [];
         window.measureLines = [];
         window.measureAreas = [];
+        window.measureMarkers = [];
         
         // 切换工具模式
         window.setToolMode = (mode) => {
@@ -676,6 +677,14 @@
                         // 测量长度模式
                         window.measurePoints.push(point);
                         
+                        // 创建测量点标记
+                        const markerGeometry = new THREE.SphereGeometry(1.5, 16, 16);
+                        const markerMaterial = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
+                        const marker = new THREE.Mesh(markerGeometry, markerMaterial);
+                        marker.position.copy(point);
+                        markerGroup.add(marker);
+                        window.measureMarkers.push(marker);
+                        
                         if (window.measurePoints.length === 2) {
                             const p1 = window.measurePoints[0];
                             const p2 = window.measurePoints[1];
@@ -711,11 +720,12 @@
                         window.measurePoints.push(point);
                         
                         // 创建测量点标记
-                        const markerGeometry = new THREE.SphereGeometry(1, 8, 8);
+                        const markerGeometry = new THREE.SphereGeometry(1.5, 16, 16);
                         const markerMaterial = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
                         const marker = new THREE.Mesh(markerGeometry, markerMaterial);
                         marker.position.copy(point);
                         markerGroup.add(marker);
+                        window.measureMarkers.push(marker);
                         
                         if (window.measurePoints.length >= 3) {
                             // 计算多边形面积（投影到XZ平面）
@@ -814,12 +824,49 @@
         
         // 清除标记按钮
         window.clearMarkers = () => {
+            // 清除markerGroup中的所有标记
             while(markerGroup.children.length > 0) {
                 const child = markerGroup.children[0];
                 if (child.geometry) child.geometry.dispose();
                 if (child.material) child.material.dispose();
                 markerGroup.remove(child);
             }
+            
+            // 清除测量线
+            if (window.measureLines) {
+                window.measureLines.forEach(line => {
+                    if (line.geometry) line.geometry.dispose();
+                    if (line.material) line.material.dispose();
+                    if (line.parent) line.parent.remove(line);
+                });
+                window.measureLines = [];
+            }
+            
+            // 清除测量区域
+            if (window.measureAreas) {
+                window.measureAreas.forEach(area => {
+                    if (area.geometry) area.geometry.dispose();
+                    if (area.material) area.material.dispose();
+                    if (area.parent) area.parent.remove(area);
+                });
+                window.measureAreas = [];
+            }
+            
+            // 清除测量标记点
+            if (window.measureMarkers) {
+                window.measureMarkers.forEach(marker => {
+                    if (marker.geometry) marker.geometry.dispose();
+                    if (marker.material) marker.material.dispose();
+                    if (marker.parent) marker.parent.remove(marker);
+                });
+                window.measureMarkers = [];
+            }
+            
+            // 重置测量点
+            window.measurePoints = [];
+            
+            // 重置信息显示
+            document.getElementById('measure-info').innerText = '选择工具开始测量';
         };
 
         ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
@@ -1513,6 +1560,22 @@
         document.getElementById('height-val').innerText = heightScale.toFixed(2) + 'x';
         const isSmooth = document.getElementById('render-mode-toggle').checked;
         const scaleMultiplier = isSmooth ? 0.5 : 0.3;
+        
+        // 计算原始高程范围（不受高度夸张影响）
+        let rawMinHeight = Infinity;
+        let rawMaxHeight = -Infinity;
+        for (let i = 0; i < heightData.length; i++) {
+            if (heightData[i] < rawMinHeight) rawMinHeight = heightData[i];
+            if (heightData[i] > rawMaxHeight) rawMaxHeight = heightData[i];
+        }
+        
+        // 存储原始高程范围供等高线和分层设色使用
+        window.rawElevationRange = {
+            min: rawMinHeight,
+            max: rawMaxHeight,
+            range: rawMaxHeight - rawMinHeight
+        };
+        
         let maxHeight = 0;
         let minHeight = Infinity;
         
@@ -1533,26 +1596,37 @@
             terrainGroup.remove(obj);
         }
 
+        // 创建原始高程比例属性（用于等高线和分层设色）
+        const rawElevationArray = new Float32Array((segs + 1) * (segs + 1));
+        
         for(let i=0, j=0; i<pos.length; i+=3, j++) {
             const x = Math.floor((j % (segs + 1)) / segs * (rawWidth - 1));
             const y = Math.floor(Math.floor(j / (segs + 1)) / segs * (rawHeight - 1));
             const idx = y * rawWidth + x;
-            pos[i+1] = heightData[idx] * scaleMultiplier * heightScale;
+            const rawElevation = heightData[idx];
+            pos[i+1] = rawElevation * scaleMultiplier * heightScale;
+            // 存储归一化的原始高程（0-1）
+            rawElevationArray[j] = (rawElevation - rawMinHeight) / (rawMaxHeight - rawMinHeight);
             if(pos[i+1] > maxHeight) maxHeight = pos[i+1];
             if(pos[i+1] < minHeight) minHeight = pos[i+1];
         }
+        
+        // 添加原始高程属性到geometry
+        geometry.setAttribute('aRawElevation', new THREE.BufferAttribute(rawElevationArray, 1));
+        
         geometry.computeVertexNormals();
 
-        // 自动计算最佳等高距（确保minHeight和maxHeight有效）
-        if (minHeight === Infinity) minHeight = 0;
-        if (maxHeight === 0) maxHeight = 1;
-        autoCalculateBestContourSpacing(minHeight, maxHeight);
+        // 自动计算最佳等高距（基于原始高程）
+        if (rawMinHeight === Infinity) rawMinHeight = 0;
+        if (rawMaxHeight === -Infinity) rawMaxHeight = 1;
+        autoCalculateBestContourSpacing(rawMinHeight, rawMaxHeight);
 
         material = new THREE.MeshStandardMaterial({ roughness: 0.8, metalness: 0.1 });
         if(customTexture) material.map = customTexture;
         
-        const maxHeightForShader = maxHeight || 76.5;
-        material.onBeforeCompile = getShaderCompileFunction(maxHeightForShader);
+        // 使用原始高程范围
+        const maxHeightForShader = rawMaxHeight - rawMinHeight || 1;
+        material.onBeforeCompile = getShaderCompileFunction(maxHeightForShader, rawMinHeight, rawMaxHeight);
 
         terrain = new THREE.Mesh(geometry, material);
         terrain.receiveShadow = terrain.castShadow = true;
@@ -1590,6 +1664,7 @@
         // 清除导入的DEM数据
         window.demInfo = null;
         window.terrainRealSize = null;
+        window.rawElevationRange = null;
         
         // 清除DEM信息显示
         const displayEl = document.getElementById('dem-info-display');
@@ -2323,94 +2398,55 @@
         document.getElementById('height-val').innerText = heightScale.toFixed(2) + 'x';
         const isSmooth = document.getElementById('render-mode-toggle').checked;
         const scaleMultiplier = isSmooth ? 0.5 : 0.3;
+        
+        // 计算原始高程范围（不受高度夸张影响）
+        let rawMinHeight = Infinity;
+        let rawMaxHeight = -Infinity;
+        for (let i = 0; i < heightData.length; i++) {
+            if (heightData[i] < rawMinHeight) rawMinHeight = heightData[i];
+            if (heightData[i] > rawMaxHeight) rawMaxHeight = heightData[i];
+        }
+        
+        // 存储原始高程范围供等高线和分层设色使用
+        window.rawElevationRange = {
+            min: rawMinHeight,
+            max: rawMaxHeight,
+            range: rawMaxHeight - rawMinHeight
+        };
+        
         let maxHeight = 0;
         let minHeight = Infinity;
+        
+        // 创建原始高程比例属性（用于等高线和分层设色）
+        const rawElevationArray = new Float32Array((segs + 1) * (segs + 1));
+        
         for(let i=0, j=0; i<pos.length; i+=3, j++) {
             const x = Math.floor((j % (segs + 1)) / segs * (rawWidth - 1));
             const y = Math.floor(Math.floor(j / (segs + 1)) / segs * (rawHeight - 1));
-            const heightValue = heightData[y * rawWidth + x] * scaleMultiplier * heightScale;
-            pos[i+1] = heightValue;
+            const rawElevation = heightData[y * rawWidth + x];
+            pos[i+1] = rawElevation * scaleMultiplier * heightScale;
+            // 存储归一化的原始高程（0-1）
+            rawElevationArray[j] = (rawElevation - rawMinHeight) / (rawMaxHeight - rawMinHeight);
             if(pos[i+1] > maxHeight) maxHeight = pos[i+1];
             if(pos[i+1] < minHeight) minHeight = pos[i+1];
         }
+        
+        // 添加原始高程属性到geometry
+        geometry.setAttribute('aRawElevation', new THREE.BufferAttribute(rawElevationArray, 1));
+        
         geometry.computeVertexNormals();
 
-        // 自动计算最佳等高距（确保minHeight和maxHeight有效）
-        if (minHeight === Infinity) minHeight = 0;
-        if (maxHeight === 0) maxHeight = 1;
-        autoCalculateBestContourSpacing(minHeight, maxHeight);
+        // 自动计算最佳等高距（基于原始高程）
+        if (rawMinHeight === Infinity) rawMinHeight = 0;
+        if (rawMaxHeight === -Infinity) rawMaxHeight = 1;
+        autoCalculateBestContourSpacing(rawMinHeight, rawMaxHeight);
 
         material = new THREE.MeshStandardMaterial({ roughness: 0.8, metalness: 0.1 });
         if(customTexture) material.map = customTexture;
         
-        const maxHeightForShader = maxHeight || 76.5;
-        
-        material.onBeforeCompile = (shader) => {
-            shader.uniforms.uPalette = { value: currentPalette.map(c => new THREE.Color(c)) };
-            shader.uniforms.uSmooth = { value: isSmoothMode ? 1.0 : 0.0 };
-            shader.uniforms.uShowContour = { value: 0.0 };
-            shader.uniforms.uRemovePalette = { value: 0.0 };
-            shader.uniforms.uContourSpacing = { value: 10.0 };
-            shader.uniforms.uContourWidth = { value: 1.0 };
-            shader.uniforms.uBaseColor = { value: new THREE.Color(0x808080) };
-            shader.uniforms.uContourColor = { value: new THREE.Color(0xffffff) }
-            
-            material.userData.shader = shader;
-
-            shader.vertexShader = `
-                varying float vHeight;
-                ${shader.vertexShader}
-            `.replace('#include <begin_vertex>', 
-                `#include <begin_vertex>
-                vHeight = position.y / ${maxHeightForShader.toFixed(2)};`
-            );
-
-            shader.fragmentShader = `
-                uniform vec3 uPalette[8];
-                uniform float uSmooth;
-                uniform float uShowContour;
-                uniform float uRemovePalette;
-                uniform float uContourSpacing;
-                uniform float uContourWidth;
-                uniform vec3 uBaseColor;
-                uniform vec3 uContourColor;
-                varying float vHeight;
-                ${shader.fragmentShader}
-            `.replace('#include <map_fragment>', `
-                float h = clamp(vHeight, 0.0, 0.999);
-                vec3 finalColor;
-
-                if(uRemovePalette > 0.5) {
-                    finalColor = uBaseColor;
-                } else if(uSmooth > 0.5) {
-                    float fIdx = h * 7.0;
-                    int idx = int(floor(fIdx));
-                    float t = fract(fIdx);
-                    finalColor = mix(uPalette[idx], uPalette[idx+1], t);
-                } else {
-                    float fIdx = h * 8.0;
-                    float idx = floor(fIdx);
-                    float edge = smoothstep(0.96, 1.0, fract(fIdx));
-                    vec3 c1 = uPalette[int(idx)];
-                    vec3 c2 = uPalette[int(min(idx + 1.0, 7.0))];
-                    finalColor = mix(c1, c2, edge * 0.1); 
-                }
-
-                diffuseColor.rgb = finalColor;
-
-                #ifdef USE_MAP
-                    diffuseColor.rgb = mix(diffuseColor.rgb, texture2D(map, vUv).rgb, 0.4);
-                #endif
-
-                if(uShowContour > 0.5) {
-                    // 等高距越大，等高线越稀疏（间距越大）
-                    float contourFreq = 50.0 / uContourSpacing;
-                    float lineWidth = uContourWidth * 0.5;
-                    float line = abs(fract(vHeight * contourFreq - 0.5) - 0.5) / fwidth(vHeight * contourFreq);
-                    diffuseColor.rgb = mix(diffuseColor.rgb, uContourColor, (1.0 - smoothstep(0.0, lineWidth, line)) * 0.5);
-                }
-            `);
-        };
+        // 使用原始高程范围
+        const maxHeightForShader = rawMaxHeight - rawMinHeight || 1;
+        material.onBeforeCompile = getShaderCompileFunction(maxHeightForShader, rawMinHeight, rawMaxHeight);
 
         terrain = new THREE.Mesh(geometry, material);
         terrain.receiveShadow = terrain.castShadow = true;
@@ -2421,8 +2457,10 @@
         updateUniforms();
     }
 
-    function getShaderCompileFunction(maxHeightForShader) {
-        const maxH = maxHeightForShader || 76.5;
+    function getShaderCompileFunction(maxHeightForShader, rawMinHeight, rawMaxHeight) {
+        const maxH = maxHeightForShader || 1;
+        const minH = rawMinHeight || 0;
+        const rangeH = (rawMaxHeight - rawMinHeight) || 1;
         return function(shader) {
             shader.uniforms.uPalette = { value: currentPalette.map(c => new THREE.Color(c)) };
             shader.uniforms.uSmooth = { value: isSmoothMode ? 1.0 : 0.0 };
@@ -2433,15 +2471,20 @@
             shader.uniforms.uTextureOpacity = { value: 0.8 };
             shader.uniforms.uBaseColor = { value: new THREE.Color(0x808080) };
             shader.uniforms.uContourColor = { value: new THREE.Color(0xffffff) };
+            shader.uniforms.uRawMinHeight = { value: minH };
+            shader.uniforms.uRawHeightRange = { value: rangeH };
             
             material.userData.shader = shader;
 
             shader.vertexShader = `
+                attribute float aRawElevation;
                 varying float vHeight;
+                varying float vRawElevation;
                 ${shader.vertexShader}
             `.replace('#include <begin_vertex>', 
                 `#include <begin_vertex>
-                vHeight = position.y / ${maxH.toFixed(2)};`
+                vHeight = position.y / ${maxH.toFixed(2)};
+                vRawElevation = aRawElevation;`
             );
 
             shader.fragmentShader = `
@@ -2454,10 +2497,14 @@
                 uniform float uTextureOpacity;
                 uniform vec3 uBaseColor;
                 uniform vec3 uContourColor;
+                uniform float uRawMinHeight;
+                uniform float uRawHeightRange;
                 varying float vHeight;
+                varying float vRawElevation;
                 ${shader.fragmentShader}
             `.replace('#include <map_fragment>', `
-                float h = clamp(vHeight, 0.0, 0.999);
+                // 使用原始高程进行分层设色和等高线计算
+                float h = clamp(vRawElevation, 0.0, 0.999);
                 vec3 finalColor;
 
                 if(uRemovePalette > 0.5) {
@@ -2485,9 +2532,10 @@
 
                 if(uShowContour > 0.5) {
                     // 等高距越大，等高线越稀疏（间距越大）
-                    float contourFreq = 50.0 / uContourSpacing;
+                    // 使用原始高程计算等高线
+                    float contourFreq = uRawHeightRange / uContourSpacing;
                     float lineWidth = uContourWidth * 0.5;
-                    float line = abs(fract(vHeight * contourFreq - 0.5) - 0.5) / fwidth(vHeight * contourFreq);
+                    float line = abs(fract(vRawElevation * contourFreq - 0.5) - 0.5) / fwidth(vRawElevation * contourFreq);
                     diffuseColor.rgb = mix(diffuseColor.rgb, uContourColor, (1.0 - smoothstep(0.0, lineWidth, line)) * 0.5);
                 }
             `);
@@ -2497,9 +2545,9 @@
     function rebuildMaterial() {
         if(!terrain) return;
         
-        const maxHeight = terrain.geometry.attributes.position.array.reduce((max, val, idx) => {
-            return idx % 3 === 1 ? Math.max(max, val) : max;
-        }, 0);
+        // 使用存储的原始高程范围
+        const rawRange = window.rawElevationRange || { min: 0, max: 76.5, range: 76.5 };
+        const maxHeightForShader = rawRange.range || 1;
         
         material = new THREE.MeshStandardMaterial({ 
             roughness: 0.8, 
@@ -2507,7 +2555,7 @@
             map: customTexture
         });
         
-        material.onBeforeCompile = getShaderCompileFunction(maxHeight);
+        material.onBeforeCompile = getShaderCompileFunction(maxHeightForShader, rawRange.min, rawRange.max);
         terrain.material = material;
         material.needsUpdate = true;
         updateUniforms();
@@ -2525,6 +2573,10 @@
         const contourLogValue = logarithmicTransform(contourSliderValue, 1, 50);
         shader.uniforms.uContourSpacing.value = contourLogValue;
         shader.uniforms.uContourWidth.value = parseFloat(document.getElementById('contour-width').value);
+        // 更新原始高程范围uniform
+        if (shader.uniforms.uRawHeightRange && window.rawElevationRange) {
+            shader.uniforms.uRawHeightRange.value = window.rawElevationRange.range;
+        }
         if(shader.uniforms.uTextureOpacity) {
             shader.uniforms.uTextureOpacity.value = parseFloat(document.getElementById('texture-opacity').value) / 100;
         }
