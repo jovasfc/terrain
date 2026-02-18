@@ -115,33 +115,48 @@
                     <div class="space-y-2">
                         <label class="text-xs text-slate-500">DEM 数据集</label>
                         <select id="dataset-select" class="w-full px-3 py-2 border rounded-lg text-sm bg-slate-50 outline-none focus:ring-2 focus:ring-blue-500">
-                            <option value="SRTMGL1" selected>SRTM GL1 (30m)</option>
-                            <option value="COP30">Copernicus GLO-30 (30m)</option>
-                            <option value="NASADEM">NASADEM (30m)</option>
-                            <option value="ALOS">ALOS World 3D (30m)</option>
+                            <optgroup label="SRTM 系列">
+                                <option value="SRTMGL1" selected>SRTM GL1 (30m)</option>
+                                <option value="SRTMGL3">SRTM GL3 (90m)</option>
+                                <option value="SRTM15Plus">SRTM15+ (全球海底地形)</option>
+                            </optgroup>
+                            <optgroup label="Copernicus 系列">
+                                <option value="COP30">Copernicus GLO-30 (30m)</option>
+                                <option value="COP90">Copernicus GLO-90 (90m)</option>
+                            </optgroup>
+                            <optgroup label="其他高程数据">
+                                <option value="NASADEM">NASADEM (30m)</option>
+                                <option value="ALOS">ALOS World 3D (30m)</option>
+                                <option value="ASTER">ASTER GDEM (30m)</option>
+                                <option value="GMTED2010">GMTED2010 (全球多分辨率)</option>
+                                <option value="GEBCO2021">GEBCO2021 (全球海底地形)</option>
+                            </optgroup>
                         </select>
                     </div>
 
                     <div class="space-y-2">
                         <label class="text-xs text-slate-500">卫星图下载等级 (Zoom Level)</label>
                         <select id="zoom-select" class="w-full px-3 py-2 border rounded-lg text-sm bg-slate-50 outline-none focus:ring-2 focus:ring-blue-500">
-                            <option value="current">与当前地图视图一致</option>
-                            <option value="6">Level 6</option>
-                            <option value="7">Level 7</option>
-                            <option value="8">Level 8</option>
-                            <option value="9">Level 9</option>
-                            <option value="10">Level 10</option>
-                            <option value="11">Level 11</option>
-                            <option value="12">Level 12</option>
-                            <option value="13">Level 13</option>
-                            <option value="14">Level 14</option>
-                            <option value="15">Level 15</option>
-                            <option value="16">Level 16</option>
-                            <option value="17">Level 17</option>
-                            <option value="18">Level 18</option>
-                            <option value="19">Level 19 (最高精度)</option>
+                            <option value="current-1">比当前地图视图低一级</option>
+                            <option value="current" selected>与当前地图视图一致</option>
+                            <option value="current+1">比当前地图视图高一级</option>
+                            <option value="current+2">比当前地图视图高二级</option>
                         </select>
                         <p class="text-[10px] text-slate-400 italic">注：地图右上角显示当前查看的等级，建议下载等级略高于或等于查看等级。</p>
+                    </div>
+
+                    <div class="space-y-2 pt-2 border-t border-slate-100">
+                        <label class="text-xs text-slate-500">地图图层</label>
+                        <select id="map-layer-select" class="w-full px-3 py-2 border rounded-lg text-sm bg-slate-50 outline-none focus:ring-2 focus:ring-blue-500">
+                            <option value="satellite">ESRI卫星影像</option>
+                            <option value="esri">ESRI地图</option>
+                            <option value="topo">ESRI地形</option>
+                            <option value="natgeo">国家地理</option>
+                            <option value="transport">ESRI交通</option>
+                            <option value="relief">ESRI阴影地形</option>
+                            <option value="osm">OpenStreetMap</option>
+                            <option value="gaode">高德卫星影像</option>
+                        </select>
                     </div>
 
                     <div class="space-y-2 pt-2 border-t border-slate-100">
@@ -186,11 +201,33 @@
                     </div>
                     <div id="size-estimate" class="text-xs text-slate-500 italic">请在地图上划定区域...</div>
 
-                    <button id="download-btn" class="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold transition shadow-lg shadow-indigo-200 disabled:opacity-50 disabled:cursor-not-allowed mt-auto">
-                        开始批量处理
-                    </button>
+                    <div class="flex gap-2">
+                        <button id="download-btn" class="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold transition shadow-lg shadow-indigo-200 disabled:opacity-50 disabled:cursor-not-allowed">
+                            开始下载
+                        </button>
+                        
+                        <button id="download-open-btn" class="flex-1 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold transition shadow-lg shadow-emerald-200 disabled:opacity-50 disabled:cursor-not-allowed">
+                            下载并打开
+                        </button>
+                    </div>
                     
                     <div id="status-msg" class="text-xs mt-2 hidden break-words font-medium"></div>
+
+                    <div class="pt-3 mt-3 border-t border-slate-100">
+                        <h3 class="font-bold text-slate-700 text-sm mb-2">🇨🇳 国内 DEM 数据源</h3>
+                        <div class="space-y-1 text-xs">
+                            <a href="https://www.gscloud.cn/" target="_blank" class="block p-2 bg-blue-50 hover:bg-blue-100 rounded text-blue-700 transition">
+                                📦 地理空间数据云 (30m/90m)
+                            </a>
+                            <a href="https://www.geodata.cn/" target="_blank" class="block p-2 bg-green-50 hover:bg-green-100 rounded text-green-700 transition">
+                                🌍 国家地球系统科学数据中心
+                            </a>
+                            <a href="https://data.nasa.gov/" target="_blank" class="block p-2 bg-purple-50 hover:bg-purple-100 rounded text-purple-700 transition">
+                                🛰️ NASA Earthdata (需注册)
+                            </a>
+                        </div>
+                        <p class="text-[10px] text-slate-400 mt-2 italic">提示：默认的 OpenTopography 数据无法下载时，可以使用国内数据源，但需手动下载后导入地形模拟页面</p>
+                    </div>
                 </div>
             </div>
 
@@ -217,15 +254,102 @@
         </div>
     </div>
 
+    <!-- 地图下载类型选择对话框 -->
+    <div id="map-download-modal" class="fixed inset-0 bg-black/50 z-[2000] hidden flex items-center justify-center">
+        <div class="bg-white rounded-2xl shadow-2xl p-6 max-w-md w-full mx-4 max-h-[90vh] overflow-y-auto">
+            <h3 class="text-lg font-bold text-slate-800 mb-4">选择要下载的地图类型</h3>
+            
+            <!-- 全选/取消全选按钮 -->
+            <div class="flex gap-2 mb-4">
+                <button id="select-all-maps" class="flex-1 py-2 px-3 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded-lg text-sm font-medium transition">
+                    ✓ 全选
+                </button>
+                <button id="deselect-all-maps" class="flex-1 py-2 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-sm font-medium transition">
+                    ✗ 全部取消
+                </button>
+            </div>
+            
+            <div class="space-y-3">
+                <label class="flex items-center gap-3 p-3 bg-slate-50 rounded-lg cursor-pointer hover:bg-slate-100 transition">
+                    <input type="checkbox" id="download-satellite" checked class="w-5 h-5 rounded text-blue-600">
+                    <div>
+                        <div class="font-medium text-slate-700">ESRI卫星影像</div>
+                        <div class="text-xs text-slate-500">satellite.png</div>
+                    </div>
+                </label>
+                <label class="flex items-center gap-3 p-3 bg-slate-50 rounded-lg cursor-pointer hover:bg-slate-100 transition">
+                    <input type="checkbox" id="download-esri" checked class="w-5 h-5 rounded text-blue-600">
+                    <div>
+                        <div class="font-medium text-slate-700">ESRI地图</div>
+                        <div class="text-xs text-slate-500">esri.png</div>
+                    </div>
+                </label>
+                <label class="flex items-center gap-3 p-3 bg-slate-50 rounded-lg cursor-pointer hover:bg-slate-100 transition">
+                    <input type="checkbox" id="download-topo" checked class="w-5 h-5 rounded text-blue-600">
+                    <div>
+                        <div class="font-medium text-slate-700">ESRI地形</div>
+                        <div class="text-xs text-slate-500">topo.png</div>
+                    </div>
+                </label>
+                <label class="flex items-center gap-3 p-3 bg-slate-50 rounded-lg cursor-pointer hover:bg-slate-100 transition">
+                    <input type="checkbox" id="download-natgeo" checked class="w-5 h-5 rounded text-blue-600">
+                    <div>
+                        <div class="font-medium text-slate-700">国家地理</div>
+                        <div class="text-xs text-slate-500">natgeo.png</div>
+                    </div>
+                </label>
+                <label class="flex items-center gap-3 p-3 bg-slate-50 rounded-lg cursor-pointer hover:bg-slate-100 transition">
+                    <input type="checkbox" id="download-transport" checked class="w-5 h-5 rounded text-blue-600">
+                    <div>
+                        <div class="font-medium text-slate-700">ESRI交通</div>
+                        <div class="text-xs text-slate-500">transport.png</div>
+                    </div>
+                </label>
+                <label class="flex items-center gap-3 p-3 bg-slate-50 rounded-lg cursor-pointer hover:bg-slate-100 transition">
+                    <input type="checkbox" id="download-relief" checked class="w-5 h-5 rounded text-blue-600">
+                    <div>
+                        <div class="font-medium text-slate-700">ESRI阴影地形</div>
+                        <div class="text-xs text-slate-500">relief.png</div>
+                    </div>
+                </label>
+                <label class="flex items-center gap-3 p-3 bg-slate-50 rounded-lg cursor-pointer hover:bg-slate-100 transition">
+                    <input type="checkbox" id="download-osm" checked class="w-5 h-5 rounded text-blue-600">
+                    <div>
+                        <div class="font-medium text-slate-700">OpenStreetMap</div>
+                        <div class="text-xs text-slate-500">osm.png</div>
+                    </div>
+                </label>
+                <label class="flex items-center gap-3 p-3 bg-slate-50 rounded-lg cursor-pointer hover:bg-slate-100 transition">
+                    <input type="checkbox" id="download-gaode" checked class="w-5 h-5 rounded text-blue-600">
+                    <div>
+                        <div class="font-medium text-slate-700">高德卫星影像</div>
+                        <div class="text-xs text-slate-500">gaode.png</div>
+                    </div>
+                </label>
+            </div>
+            <div class="flex gap-3 mt-6">
+                <button id="cancel-map-download" class="flex-1 py-2 px-4 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg font-medium transition">
+                    取消
+                </button>
+                <button id="confirm-map-download" class="flex-1 py-2 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition">
+                    确认下载
+                </button>
+            </div>
+        </div>
+    </div>
+
     <script>
         const DEFAULT_KEY = "ce0e6e72153e5eeb1f1d0217583827d6";
         let selectedBounds = null;
         let satelliteLayer = null;
+        let currentMapLayer = 'satellite';
 
         const apiKeyInput = document.getElementById('api-key');
         const datasetSelect = document.getElementById('dataset-select');
         const zoomSelect = document.getElementById('zoom-select');
+        const mapLayerSelect = document.getElementById('map-layer-select');
         const downloadBtn = document.getElementById('download-btn');
+        const downloadOpenBtn = document.getElementById('download-open-btn');
         const statusMsg = document.getElementById('status-msg');
         const sizeEstimate = document.getElementById('size-estimate');
         const overlay = document.getElementById('processing-overlay');
@@ -233,6 +357,110 @@
 
         apiKeyInput.value = localStorage.getItem('ot_api_key') || '';
         apiKeyInput.addEventListener('change', () => localStorage.setItem('ot_api_key', apiKeyInput.value));
+
+        // DEM数据集选择变化时更新估算
+        datasetSelect.addEventListener('change', () => {
+            if (selectedBounds) {
+                updateUI(selectedBounds);
+            }
+        });
+
+        // 全选和全部取消功能
+        document.getElementById('select-all-maps').addEventListener('click', () => {
+            const checkboxes = document.querySelectorAll('#map-download-modal input[type="checkbox"]');
+            checkboxes.forEach(cb => cb.checked = true);
+        });
+
+        document.getElementById('deselect-all-maps').addEventListener('click', () => {
+            const checkboxes = document.querySelectorAll('#map-download-modal input[type="checkbox"]');
+            checkboxes.forEach(cb => cb.checked = false);
+        });
+
+        // 地图图层切换功能
+        const mapLayers = {
+            satellite: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+                attribution: 'Esri Satellite',
+                crossOrigin: true,
+                maxZoom: 19
+            }),
+            esri: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', {
+                attribution: 'ESRI World Street Map',
+                crossOrigin: true,
+                maxZoom: 19
+            }),
+            topo: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}', {
+                attribution: 'ESRI World Topo Map',
+                crossOrigin: true,
+                maxZoom: 19
+            }),
+            natgeo: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/NatGeo_World_Map/MapServer/tile/{z}/{y}/{x}', {
+                attribution: 'National Geographic World Map',
+                crossOrigin: true,
+                maxZoom: 16
+            }),
+            transport: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}', {
+                attribution: 'ESRI World Transportation',
+                crossOrigin: true,
+                maxZoom: 19
+            }),
+            relief: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Shaded_Relief/MapServer/tile/{z}/{y}/{x}', {
+                attribution: 'ESRI World Shaded Relief',
+                crossOrigin: true,
+                maxZoom: 13
+            }),
+            osm: L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '© OpenStreetMap contributors',
+                subdomains: ['a', 'b', 'c'],
+                crossOrigin: true,
+                maxZoom: 19
+            }),
+            gaode: L.tileLayer('https://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}', {
+                attribution: '高德卫星影像',
+                subdomains: ['1', '2', '3', '4'],
+                crossOrigin: true,
+                maxZoom: 18
+            })
+        };
+
+        // 地图最大缩放层级配置
+        const mapMaxZoom = {
+            satellite: 18,
+            esri: 13,
+            topo: 13,
+            natgeo: 12,
+            transport: 15,
+            relief: 13,
+            osm: 18,
+            gaode: 18
+        };
+        
+        // 地图类型名称映射
+        const mapLayerNames = {
+            satellite: 'ESRI卫星影像',
+            esri: 'ESRI街道地图',
+            topo: 'ESRI地形图',
+            natgeo: '国家地理地图',
+            transport: 'ESRI交通图',
+            relief: 'ESRI阴影地形图',
+            osm: 'OpenStreetMap',
+            gaode: '高德卫星影像'
+        };
+
+        // 切换地图图层
+        function switchMapLayer(layerType) {
+            if (satelliteLayer) {
+                map.removeLayer(satelliteLayer);
+            }
+            
+            currentMapLayer = layerType;
+            satelliteLayer = mapLayers[layerType];
+            satelliteLayer.addTo(map);
+        }
+
+        // 监听地图图层切换
+        mapLayerSelect.addEventListener('change', (e) => {
+            switchMapLayer(e.target.value);
+        });
 
         // 1. 初始化地图
         const map = L.map('map', {
@@ -249,28 +477,90 @@
         // 添加比例尺
         L.control.scale({ imperial: false, metric: true, position: 'bottomleft' }).addTo(map);
 
-        // 地名搜索功能
+        // 地名搜索功能 - 使用百度地图API
         let searchMarker = null;
         const locationSearchInput = document.getElementById('location-search');
         const searchBtn = document.getElementById('search-btn');
+        
+        // 百度地图API Key
+        const BAIDU_AK = '2P3BS8kb9vg0yGvXpECPNoYiC7bii7O1';
 
-        async function searchLocation() {
+        // 百度坐标转WGS84坐标
+        function bd09ToWgs84(bd_lon, bd_lat) {
+            const x = bd_lon - 0.0065;
+            const y = bd_lat - 0.006;
+            const z = Math.sqrt(x * x + y * y) - 0.00002 * Math.sin(y * Math.PI * 3000.0 / 180.0);
+            const theta = Math.atan2(y, x) - 0.000003 * Math.cos(x * Math.PI * 3000.0 / 180.0);
+            const gg_lon = z * Math.cos(theta);
+            const gg_lat = z * Math.sin(theta);
+            
+            // GCJ02 to WGS84
+            const a = 6378245.0;
+            const ee = 0.00669342162296594323;
+            
+            function outOfChina(lng, lat) {
+                return lng < 72.004 || lng > 137.8347 || lat < 0.8293 || lat > 55.8271;
+            }
+            
+            function transformLat(x, y) {
+                let ret = -100.0 + 2.0 * x + 3.0 * y + 0.2 * y * y + 0.1 * x * x + 0.2 * x * y;
+                ret += (20.0 * Math.sin(6.0 * x * Math.PI) + 20.0 * Math.sin(2.0 * x * Math.PI)) * 2.0 / 3.0;
+                ret += (20.0 * Math.sin(y * Math.PI) + 40.0 * Math.sin(y / 3.0 * Math.PI)) * 2.0 / 3.0;
+                ret += (160.0 * Math.sin(y / 12.0 * Math.PI) + 320 * Math.sin(y * Math.PI / 30.0)) * 2.0 / 3.0;
+                return ret;
+            }
+            
+            function transformLng(x, y) {
+                let ret = 300.0 + x + 2.0 * y + 0.1 * x * x + 0.1 * x * y + 0.1 * Math.sqrt(Math.abs(x));
+                ret += (20.0 * Math.sin(6.0 * x * Math.PI) + 20.0 * Math.sin(2.0 * x * Math.PI)) * 2.0 / 3.0;
+                ret += (20.0 * Math.sin(x * Math.PI) + 40.0 * Math.sin(x / 3.0 * Math.PI)) * 2.0 / 3.0;
+                ret += (150.0 * Math.sin(x / 12.0 * Math.PI) + 300.0 * Math.sin(x / 30.0 * Math.PI)) * 2.0 / 3.0;
+                return ret;
+            }
+            
+            if (outOfChina(gg_lon, gg_lat)) {
+                return { lon: gg_lon, lat: gg_lat };
+            }
+            
+            let dLat = transformLat(gg_lon - 105.0, gg_lat - 35.0);
+            let dLon = transformLng(gg_lon - 105.0, gg_lat - 35.0);
+            const radLat = gg_lat / 180.0 * Math.PI;
+            let magic = Math.sin(radLat);
+            magic = 1 - ee * magic * magic;
+            const sqrtMagic = Math.sqrt(magic);
+            dLat = (dLat * 180.0) / ((a * (1 - ee)) / (magic * sqrtMagic) * Math.PI);
+            dLon = (dLon * 180.0) / (a / sqrtMagic * Math.cos(radLat) * Math.PI);
+            const wgs_lat = gg_lat - dLat;
+            const wgs_lon = gg_lon - dLon;
+            
+            return { lon: wgs_lon, lat: wgs_lat };
+        }
+
+        function searchLocation() {
             const query = locationSearchInput.value.trim();
             if (!query) {
                 alert('请输入要搜索的地名');
                 return;
             }
 
-            try {
-                // 使用Nominatim进行地理编码
-                const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1`);
-                const data = await response.json();
-
-                if (data && data.length > 0) {
-                    const result = data[0];
-                    const lat = parseFloat(result.lat);
-                    const lon = parseFloat(result.lon);
-                    const displayName = result.display_name;
+            // 使用JSONP方式调用百度地图API
+            const callbackName = 'baiduSearchCallback_' + Date.now();
+            
+            window[callbackName] = function(data) {
+                console.log('百度搜索结果:', data);
+                
+                if (data.status === 0 && data.results && data.results.length > 0) {
+                    const result = data.results[0];
+                    const bd_lat = result.location.lat;
+                    const bd_lon = result.location.lng;
+                    const name = result.name;
+                    const address = result.address || '';
+                    
+                    // 转换为WGS84坐标
+                    const wgs = bd09ToWgs84(bd_lon, bd_lat);
+                    
+                    console.log('百度坐标:', bd_lon, bd_lat);
+                    console.log('WGS84坐标:', wgs.lon, wgs.lat);
 
                     // 移除之前的标记
                     if (searchMarker) {
@@ -278,24 +568,34 @@
                     }
 
                     // 添加新标记
-                    searchMarker = L.marker([lat, lon]).addTo(map)
-                        .bindPopup(`<b>${query}</b><br>${displayName}`)
+                    searchMarker = L.marker([wgs.lat, wgs.lon]).addTo(map)
+                        .bindPopup(`<b>${name}</b><br>${address}`)
                         .openPopup();
 
                     // 移动到该位置
-                    map.setView([lat, lon], 12);
+                    map.setView([wgs.lat, wgs.lon], 12);
 
-                    statusMsg.textContent = `已定位到: ${displayName}`;
+                    statusMsg.textContent = `已定位到: ${name}`;
                     statusMsg.className = 'text-xs mt-2 text-green-600 font-medium';
                     statusMsg.classList.remove('hidden');
                     setTimeout(() => statusMsg.classList.add('hidden'), 3000);
                 } else {
                     alert('未找到该地点，请尝试其他关键词');
                 }
-            } catch (error) {
-                console.error('搜索失败:', error);
+                
+                // 清理
+                delete window[callbackName];
+                document.body.removeChild(script);
+            };
+
+            const script = document.createElement('script');
+            script.src = `https://api.map.baidu.com/place/v2/search?query=${encodeURIComponent(query)}&region=全国&output=json&ak=${BAIDU_AK}&callback=${callbackName}`;
+            script.onerror = function() {
                 alert('搜索失败，请检查网络连接');
-            }
+                delete window[callbackName];
+                document.body.removeChild(script);
+            };
+            document.body.appendChild(script);
         }
 
         // 绑定搜索事件
@@ -466,15 +766,49 @@
             document.getElementById('val-e').innerText = e.toFixed(4);
             document.getElementById('val-w').innerText = w.toFixed(4);
 
-            const area = Math.abs(e - w) * Math.abs(n - s);
-            const estimatedMB = area * 50; 
-            if (estimatedMB > 50) {
-                sizeEstimate.innerHTML = `<span class="text-red-500 font-bold">警告: 约 ${estimatedMB.toFixed(1)}MB (超限)</span>`;
-                downloadBtn.disabled = true;
+            // 根据DEM分辨率计算估算大小
+            const demType = datasetSelect.value;
+            const resolutions = {
+                'SRTMGL1': 30,
+                'SRTMGL3': 90,
+                'SRTM15Plus': 500,
+                'COP30': 30,
+                'COP90': 90,
+                'NASADEM': 30,
+                'ALOS': 30,
+                'ASTER': 30,
+                'GMTED2010': 250,
+                'GEBCO2021': 500
+            };
+            const resolution = resolutions[demType] || 30;
+            
+            // 计算区域尺寸（米）
+            const avgLat = (n + s) / 2;
+            const widthMeters = Math.abs(e - w) * 111000 * Math.cos(avgLat * Math.PI / 180);
+            const heightMeters = Math.abs(n - s) * 111000;
+            
+            // 计算像素数
+            const widthPixels = Math.ceil(widthMeters / resolution);
+            const heightPixels = Math.ceil(heightMeters / resolution);
+            const totalPixels = widthPixels * heightPixels;
+            
+            // 估算文件大小（GeoTIFF，16位高程 + 元数据）
+            const estimatedBytes = totalPixels * 2;
+            const estimatedMB = estimatedBytes / (1024 * 1024);
+            
+            // 显示估算信息
+            const sizeInfo = `${widthPixels} x ${heightPixels} 像素，约 ${estimatedMB.toFixed(1)}MB`;
+            
+            if (estimatedMB > 100) {
+                sizeEstimate.innerHTML = `<span class="text-red-500 font-bold">⚠️ ${sizeInfo} (较大)</span>`;
+            } else if (estimatedMB > 50) {
+                sizeEstimate.innerHTML = `<span class="text-orange-500">${sizeInfo}</span>`;
             } else {
-                sizeEstimate.innerHTML = `<span class="text-green-600">估算大小: ~${estimatedMB.toFixed(1)}MB</span>`;
-                downloadBtn.disabled = false;
+                sizeEstimate.innerHTML = `<span class="text-green-600">${sizeInfo}</span>`;
             }
+            
+            downloadBtn.disabled = false;
+            downloadOpenBtn.disabled = false;
         }
 
         // 2. 导出卫星图
@@ -671,17 +1005,72 @@
         }
 
         // 修改后的卫星图捕获函数，返回数据
-        async function captureSatelliteImageData() {
+        async function captureSatelliteImageData(layerType = null, initialZoom = null) {
             return new Promise((resolve) => {
                 const targetZoom = zoomSelect.value;
                 const originalZoom = map.getZoom();
                 const originalCenter = map.getCenter();
+                const originalLayer = currentMapLayer;
+                
+                // 保存搜索标记状态并在截图前移除
+                const hadSearchMarker = searchMarker !== null;
+                if (searchMarker) {
+                    map.removeLayer(searchMarker);
+                }
+
+                // 确定当前要下载的地图类型
+                const downloadLayerType = layerType || currentMapLayer;
+                const maxZoom = mapMaxZoom[downloadLayerType] || 19;
+
+                // 如果指定了图层类型，切换到该图层并显示名称
+                if (layerType && layerType !== currentMapLayer) {
+                    switchMapLayer(layerType);
+                }
+
+                // 计算实际下载层级
+                let actualZoom;
+                let requestedZoom;
+                
+                // 获取基础层级（初始缩放层级或当前地图层级）
+                const baseZoom = initialZoom !== null ? initialZoom : map.getZoom();
+                
+                // 解析目标层级选项
+                if (targetZoom === 'current') {
+                    // 与当前地图视图一致
+                    requestedZoom = baseZoom;
+                } else if (targetZoom === 'current-1') {
+                    // 比当前地图视图低一级
+                    requestedZoom = Math.max(1, baseZoom - 1);
+                } else if (targetZoom === 'current+1') {
+                    // 比当前地图视图高一级
+                    requestedZoom = baseZoom + 1;
+                } else if (targetZoom === 'current+2') {
+                    // 比当前地图视图高二级
+                    requestedZoom = baseZoom + 2;
+                } else {
+                    // 使用用户指定的层级（数字）
+                    requestedZoom = parseInt(targetZoom);
+                }
+                
+                // 对比请求层级和最大层级，取较小值
+                const finalZoom = Math.min(requestedZoom, maxZoom);
+                actualZoom = finalZoom.toString();
+                
+                if (requestedZoom > maxZoom) {
+                    console.log(`地图 ${downloadLayerType} 的最大缩放层级为 ${maxZoom}，当前请求层级 ${requestedZoom} 已超过，自动调整为 ${finalZoom}`);
+                    showStatus(`地图 ${mapLayerNames[downloadLayerType]} 最大层级 ${maxZoom}，已自动调整为 ${finalZoom}`, "orange");
+                }
+                
+                // 显示当前捕获的地图类型和层级
+                const currentLayerName = mapLayerNames[downloadLayerType];
+                showStatus(`正在捕获 ${currentLayerName} ${finalZoom}层级...`, "blue");
+                procText.innerText = `正在捕获 ${currentLayerName} ${finalZoom}层级...`;
 
                 const prepareView = () => {
                     return new Promise((res) => {
-                        if (targetZoom !== 'current') {
+                        if (actualZoom !== 'current') {
                             map.once('moveend', () => setTimeout(res, 1000));
-                            map.setView(selectedBounds.getCenter(), parseInt(targetZoom), { animate: false });
+                            map.setView(selectedBounds.getCenter(), parseInt(actualZoom), { animate: false });
                         } else {
                             setTimeout(res, 300);
                         }
@@ -692,6 +1081,14 @@
                     leafletImage(map, function (err, canvas) {
                         if (err) {
                             console.error(err);
+                            // 恢复原始图层
+                            if (layerType && layerType !== originalLayer) {
+                                switchMapLayer(originalLayer);
+                            }
+                            // 恢复搜索标记
+                            if (hadSearchMarker && searchMarker) {
+                                searchMarker.addTo(map);
+                            }
                             resolve(null);
                             return;
                         }
@@ -714,6 +1111,14 @@
 
                         if (width <= 0 || height <= 0) {
                             console.error("Selection bounds out of view at this zoom level.");
+                            // 恢复原始图层
+                            if (layerType && layerType !== originalLayer) {
+                                switchMapLayer(originalLayer);
+                            }
+                            // 恢复搜索标记
+                            if (hadSearchMarker && searchMarker) {
+                                searchMarker.addTo(map);
+                            }
                             resolve(null);
                             return;
                         }
@@ -726,8 +1131,16 @@
 
                         const dataUrl = cropCanvas.toDataURL("image/png");
 
-                        if (targetZoom !== 'current') {
+                        // 恢复原始视图和图层
+                        if (actualZoom !== 'current') {
                             map.setView(originalCenter, originalZoom, { animate: false });
+                        }
+                        if (layerType && layerType !== originalLayer) {
+                            switchMapLayer(originalLayer);
+                        }
+                        // 恢复搜索标记
+                        if (hadSearchMarker && searchMarker) {
+                            searchMarker.addTo(map);
                         }
                         resolve(dataUrl);
                     });
@@ -756,8 +1169,45 @@
             const demType = datasetSelect.value;
             const url = `https://portal.opentopography.org/API/globaldem?demtype=${demType}&south=${s}&north=${n}&west=${w}&east=${e}&outputFormat=GTiff&API_Key=${key}`;
 
+            // 检查是否需要显示地图下载选择对话框
+            if (document.getElementById('save-sat-png').checked) {
+                const modal = document.getElementById('map-download-modal');
+                modal.classList.remove('hidden');
+                
+                return new Promise((resolve) => {
+                    const confirmBtn = document.getElementById('confirm-map-download');
+                    const cancelBtn = document.getElementById('cancel-map-download');
+                    
+                    const handleConfirm = async () => {
+                        modal.classList.add('hidden');
+                        confirmBtn.removeEventListener('click', handleConfirm);
+                        cancelBtn.removeEventListener('click', handleCancel);
+                        
+                        await performDownload(key, baseFilename, isZipMode, w, s, e, n, demType, url);
+                        resolve();
+                    };
+                    
+                    const handleCancel = () => {
+                        modal.classList.add('hidden');
+                        confirmBtn.removeEventListener('click', handleConfirm);
+                        cancelBtn.removeEventListener('click', handleCancel);
+                        resolve();
+                    };
+                    
+                    confirmBtn.addEventListener('click', handleConfirm);
+                    cancelBtn.addEventListener('click', handleCancel);
+                });
+            } else {
+                await performDownload(key, baseFilename, isZipMode, w, s, e, n, demType, url);
+            }
+        };
+
+        async function performDownload(key, baseFilename, isZipMode, w, s, e, n, demType, url) {
             overlay.classList.remove('hidden');
             showStatus("任务启动...", "blue");
+            
+            // 保存初始缩放层级，用于所有地图下载
+            const initialZoom = map.getZoom();
 
             let demStats = null;
             const zip = isZipMode ? new JSZip() : null;
@@ -818,15 +1268,109 @@
 
                 // 捕获并保存卫星图
                 if (document.getElementById('save-sat-png').checked) {
-                    procText.innerText = isZipMode ? "正在捕获卫星影像..." : "正在捕获高清卫星影像...";
-                    const satDataUrl = await captureSatelliteImageData();
+                    // 根据用户选择下载地图
+                    const downloadSatellite = document.getElementById('download-satellite').checked;
+                    const downloadEsri = document.getElementById('download-esri').checked;
+                    const downloadTopo = document.getElementById('download-topo').checked;
+                    const downloadNatgeo = document.getElementById('download-natgeo').checked;
+                    const downloadTransport = document.getElementById('download-transport').checked;
+                    const downloadRelief = document.getElementById('download-relief').checked;
+                    const downloadOsm = document.getElementById('download-osm').checked;
+                    const downloadGaode = document.getElementById('download-gaode').checked;
+                    
+                    if (downloadSatellite) {
+                        const satDataUrl = await captureSatelliteImageData('satellite', initialZoom);
+                        if (satDataUrl) {
+                            if (isZipMode) {
+                                const satBlob = dataURLtoBlob(satDataUrl);
+                                zip.file(`${baseFilename}+satellite.png`, satBlob);
+                            } else {
+                                triggerDownload(satDataUrl, `${baseFilename}+satellite.png`);
+                            }
+                        }
+                    }
 
-                    if (satDataUrl) {
-                        if (isZipMode) {
-                            const satBlob = dataURLtoBlob(satDataUrl);
-                            zip.file(`${baseFilename}+sat.png`, satBlob);
-                        } else {
-                            triggerDownload(satDataUrl, `${baseFilename}+sat.png`);
+                    if (downloadEsri) {
+                        const mapDataUrl = await captureSatelliteImageData('esri', initialZoom);
+                        if (mapDataUrl) {
+                            if (isZipMode) {
+                                const mapBlob = dataURLtoBlob(mapDataUrl);
+                                zip.file(`${baseFilename}+esri.png`, mapBlob);
+                            } else {
+                                triggerDownload(mapDataUrl, `${baseFilename}+esri.png`);
+                            }
+                        }
+                    }
+
+                    if (downloadTopo) {
+                        const topoDataUrl = await captureSatelliteImageData('topo', initialZoom);
+                        if (topoDataUrl) {
+                            if (isZipMode) {
+                                const topoBlob = dataURLtoBlob(topoDataUrl);
+                                zip.file(`${baseFilename}+topo.png`, topoBlob);
+                            } else {
+                                triggerDownload(topoDataUrl, `${baseFilename}+topo.png`);
+                            }
+                        }
+                    }
+
+                    if (downloadNatgeo) {
+                        const natgeoDataUrl = await captureSatelliteImageData('natgeo', initialZoom);
+                        if (natgeoDataUrl) {
+                            if (isZipMode) {
+                                const natgeoBlob = dataURLtoBlob(natgeoDataUrl);
+                                zip.file(`${baseFilename}+natgeo.png`, natgeoBlob);
+                            } else {
+                                triggerDownload(natgeoDataUrl, `${baseFilename}+natgeo.png`);
+                            }
+                        }
+                    }
+
+                    if (downloadTransport) {
+                        const transportDataUrl = await captureSatelliteImageData('transport', initialZoom);
+                        if (transportDataUrl) {
+                            if (isZipMode) {
+                                const transportBlob = dataURLtoBlob(transportDataUrl);
+                                zip.file(`${baseFilename}+transport.png`, transportBlob);
+                            } else {
+                                triggerDownload(transportDataUrl, `${baseFilename}+transport.png`);
+                            }
+                        }
+                    }
+
+                    if (downloadRelief) {
+                        const reliefDataUrl = await captureSatelliteImageData('relief', initialZoom);
+                        if (reliefDataUrl) {
+                            if (isZipMode) {
+                                const reliefBlob = dataURLtoBlob(reliefDataUrl);
+                                zip.file(`${baseFilename}+relief.png`, reliefBlob);
+                            } else {
+                                triggerDownload(reliefDataUrl, `${baseFilename}+relief.png`);
+                            }
+                        }
+                    }
+
+                    if (downloadOsm) {
+                        const openmapDataUrl = await captureSatelliteImageData('osm', initialZoom);
+                        if (openmapDataUrl) {
+                            if (isZipMode) {
+                                const openmapBlob = dataURLtoBlob(openmapDataUrl);
+                                zip.file(`${baseFilename}+osm.png`, openmapBlob);
+                            } else {
+                                triggerDownload(openmapDataUrl, `${baseFilename}+osm.png`);
+                            }
+                        }
+                    }
+
+                    if (downloadGaode) {
+                        const gaodeDataUrl = await captureSatelliteImageData('gaode', initialZoom);
+                        if (gaodeDataUrl) {
+                            if (isZipMode) {
+                                const gaodeBlob = dataURLtoBlob(gaodeDataUrl);
+                                zip.file(`${baseFilename}+gaode.png`, gaodeBlob);
+                            } else {
+                                triggerDownload(gaodeDataUrl, `${baseFilename}+gaode.png`);
+                            }
                         }
                     }
                 }
@@ -846,7 +1390,226 @@
             } finally {
                 overlay.classList.add('hidden');
             }
+        }
+
+        // 5. 批量处理并打开的逻辑
+        downloadOpenBtn.onclick = async () => {
+            const key = apiKeyInput.value.trim() || DEFAULT_KEY;
+            if (!selectedBounds) return;
+
+            let baseFilename = document.getElementById('export-filename').value.trim();
+            if (!baseFilename) {
+                baseFilename = 'dem_export';
+            }
+            baseFilename = baseFilename.replace(/[<>:"/\\|?*]/g, '_');
+
+            const w = selectedBounds.getWest(), s = selectedBounds.getSouth(), e = selectedBounds.getEast(), n = selectedBounds.getNorth();
+            const demType = datasetSelect.value;
+            const url = `https://portal.opentopography.org/API/globaldem?demtype=${demType}&south=${s}&north=${n}&west=${w}&east=${e}&outputFormat=GTiff&API_Key=${key}`;
+
+            // 显示地图下载选择对话框
+            if (document.getElementById('save-sat-png').checked) {
+                const modal = document.getElementById('map-download-modal');
+                modal.classList.remove('hidden');
+                
+                return new Promise((resolve) => {
+                    const confirmBtn = document.getElementById('confirm-map-download');
+                    const cancelBtn = document.getElementById('cancel-map-download');
+                    
+                    const handleConfirm = async () => {
+                        // 在用户点击确认时立即打开新窗口（必须在用户点击事件中同步执行）
+                        const newWindow = window.open('地形模拟 9图层版自动打开.html?autoLoad=pending', '_blank');
+                        
+                        modal.classList.add('hidden');
+                        confirmBtn.removeEventListener('click', handleConfirm);
+                        cancelBtn.removeEventListener('click', handleCancel);
+                        
+                        await performDownloadAndOpen(key, baseFilename, w, s, e, n, demType, url, newWindow);
+                        resolve();
+                    };
+                    
+                    const handleCancel = () => {
+                        modal.classList.add('hidden');
+                        confirmBtn.removeEventListener('click', handleConfirm);
+                        cancelBtn.removeEventListener('click', handleCancel);
+                        resolve();
+                    };
+                    
+                    confirmBtn.addEventListener('click', handleConfirm);
+                    cancelBtn.addEventListener('click', handleCancel);
+                });
+            } else {
+                // 不需要选择图层，直接打开新窗口
+                const newWindow = window.open('地形模拟 9图层版自动打开.html?autoLoad=pending', '_blank');
+                await performDownloadAndOpen(key, baseFilename, w, s, e, n, demType, url, newWindow);
+            }
         };
+
+        async function performDownloadAndOpen(key, baseFilename, w, s, e, n, demType, url, newWindow) {
+            overlay.classList.remove('hidden');
+            showStatus("任务启动...", "blue");
+            
+            const initialZoom = map.getZoom();
+            const zip = new JSZip();
+
+            try {
+                const response = await fetch(url);
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+                const blob = await response.blob();
+                if (blob.type.includes('text')) throw new Error("API 响应错误: " + await blob.text());
+
+                // 保存 TIF 文件
+                if (document.getElementById('save-tif').checked) {
+                    procText.innerText = "正在处理 TIF 文件...";
+                    const tifArrayBuffer = await blob.arrayBuffer();
+                    zip.file(`${baseFilename}+dem.tif`, tifArrayBuffer);
+                }
+
+                // 转换并保存 PNG 高程图
+                if (document.getElementById('save-dem-png').checked) {
+                    procText.innerText = "正在进行 TIFF 到 PNG 转换...";
+                    const { dataUrl, stats } = await convertTiffToPngData(blob);
+
+                    const pngBlob = dataURLtoBlob(dataUrl);
+                    zip.file(`${baseFilename}+dem.png`, pngBlob);
+
+                    // 导出 DEM 统计信息
+                    if (stats) {
+                        const statsContent = generateDemStatsContent({
+                            ...stats,
+                            north: n,
+                            south: s,
+                            east: e,
+                            west: w
+                        });
+                        zip.file(`${baseFilename}+dem.txt`, statsContent);
+                    }
+                }
+
+                // 捕获并保存卫星图
+                if (document.getElementById('save-sat-png').checked) {
+                    const downloadSatellite = document.getElementById('download-satellite').checked;
+                    const downloadEsri = document.getElementById('download-esri').checked;
+                    const downloadTopo = document.getElementById('download-topo').checked;
+                    const downloadNatgeo = document.getElementById('download-natgeo').checked;
+                    const downloadTransport = document.getElementById('download-transport').checked;
+                    const downloadRelief = document.getElementById('download-relief').checked;
+                    const downloadOsm = document.getElementById('download-osm').checked;
+                    const downloadGaode = document.getElementById('download-gaode').checked;
+                    
+                    if (downloadSatellite) {
+                        const satDataUrl = await captureSatelliteImageData('satellite', initialZoom);
+                        if (satDataUrl) {
+                            const satBlob = dataURLtoBlob(satDataUrl);
+                            zip.file(`${baseFilename}+satellite.png`, satBlob);
+                        }
+                    }
+
+                    if (downloadEsri) {
+                        const mapDataUrl = await captureSatelliteImageData('esri', initialZoom);
+                        if (mapDataUrl) {
+                            const mapBlob = dataURLtoBlob(mapDataUrl);
+                            zip.file(`${baseFilename}+esri.png`, mapBlob);
+                        }
+                    }
+
+                    if (downloadTopo) {
+                        const topoDataUrl = await captureSatelliteImageData('topo', initialZoom);
+                        if (topoDataUrl) {
+                            const topoBlob = dataURLtoBlob(topoDataUrl);
+                            zip.file(`${baseFilename}+topo.png`, topoBlob);
+                        }
+                    }
+
+                    if (downloadNatgeo) {
+                        const natgeoDataUrl = await captureSatelliteImageData('natgeo', initialZoom);
+                        if (natgeoDataUrl) {
+                            const natgeoBlob = dataURLtoBlob(natgeoDataUrl);
+                            zip.file(`${baseFilename}+natgeo.png`, natgeoBlob);
+                        }
+                    }
+
+                    if (downloadTransport) {
+                        const transportDataUrl = await captureSatelliteImageData('transport', initialZoom);
+                        if (transportDataUrl) {
+                            const transportBlob = dataURLtoBlob(transportDataUrl);
+                            zip.file(`${baseFilename}+transport.png`, transportBlob);
+                        }
+                    }
+
+                    if (downloadRelief) {
+                        const reliefDataUrl = await captureSatelliteImageData('relief', initialZoom);
+                        if (reliefDataUrl) {
+                            const reliefBlob = dataURLtoBlob(reliefDataUrl);
+                            zip.file(`${baseFilename}+relief.png`, reliefBlob);
+                        }
+                    }
+
+                    if (downloadOsm) {
+                        const osmDataUrl = await captureSatelliteImageData('osm', initialZoom);
+                        if (osmDataUrl) {
+                            const osmBlob = dataURLtoBlob(osmDataUrl);
+                            zip.file(`${baseFilename}+osm.png`, osmBlob);
+                        }
+                    }
+
+                    if (downloadGaode) {
+                        const gaodeDataUrl = await captureSatelliteImageData('gaode', initialZoom);
+                        if (gaodeDataUrl) {
+                            const gaodeBlob = dataURLtoBlob(gaodeDataUrl);
+                            zip.file(`${baseFilename}+gaode.png`, gaodeBlob);
+                        }
+                    }
+                }
+
+                // 生成 ZIP 并保存到 IndexedDB
+                procText.innerText = "正在打包 ZIP 文件...";
+                const zipBlob = await zip.generateAsync({ type: 'blob' });
+
+                // 保存到 IndexedDB
+                procText.innerText = "正在保存到本地存储...";
+                await saveZipToIndexedDB(zipBlob, baseFilename);
+
+                // 设置就绪标志
+                localStorage.setItem('terrainZipReady', Date.now().toString());
+
+                showStatus("处理完成！", "green");
+
+            } catch (err) {
+                showStatus("错误: " + err.message, "red");
+                console.error(err);
+                if (newWindow) newWindow.close();
+            } finally {
+                overlay.classList.add('hidden');
+            }
+        }
+
+        // IndexedDB 操作函数
+        function openDatabase() {
+            return new Promise((resolve, reject) => {
+                const request = indexedDB.open('TerrainSimDB', 1);
+                request.onerror = () => reject(request.error);
+                request.onsuccess = () => resolve(request.result);
+                request.onupgradeneeded = (event) => {
+                    const db = event.target.result;
+                    if (!db.objectStoreNames.contains('zipFiles')) {
+                        db.createObjectStore('zipFiles');
+                    }
+                };
+            });
+        }
+
+        async function saveZipToIndexedDB(blob, filename) {
+            const db = await openDatabase();
+            return new Promise((resolve, reject) => {
+                const transaction = db.transaction(['zipFiles'], 'readwrite');
+                const store = transaction.objectStore('zipFiles');
+                const request = store.put({ blob: blob, filename: filename, timestamp: Date.now() }, 'latestZip');
+                request.onerror = () => reject(request.error);
+                request.onsuccess = () => resolve();
+            });
+        }
 
         function showStatus(msg, color) {
             statusMsg.innerText = msg;
