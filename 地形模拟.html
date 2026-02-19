@@ -1475,7 +1475,7 @@
         };
     }
 
-    function buildTerrainFromGeotiff(tiff) {
+    function buildTerrainFromGeotiff(tiff, skipContourCalc = false) {
         const width = tiff.width;
         const height = tiff.height;
         const data = tiff.data;
@@ -1616,10 +1616,12 @@
         
         geometry.computeVertexNormals();
 
-        // 自动计算最佳等高距（基于原始高程）
+        // 自动计算最佳等高距（基于原始高程），仅在需要时计算
         if (rawMinHeight === Infinity) rawMinHeight = 0;
         if (rawMaxHeight === -Infinity) rawMaxHeight = 1;
-        autoCalculateBestContourSpacing(rawMinHeight, rawMaxHeight);
+        if (!skipContourCalc) {
+            autoCalculateBestContourSpacing(rawMinHeight, rawMaxHeight);
+        }
 
         material = new THREE.MeshStandardMaterial({ roughness: 0.8, metalness: 0.1 });
         if(customTexture) material.map = customTexture;
@@ -2322,7 +2324,7 @@
         });
     }
 
-    function buildTerrain(canvas) {
+    function buildTerrain(canvas, skipContourCalc = false) {
         rawWidth = canvas.width; rawHeight = canvas.height;
         const data = canvas.getContext('2d').getImageData(0, 0, rawWidth, rawHeight).data;
         heightData = new Float32Array(rawWidth * rawHeight);
@@ -2436,10 +2438,12 @@
         
         geometry.computeVertexNormals();
 
-        // 自动计算最佳等高距（基于原始高程）
+        // 自动计算最佳等高距（基于原始高程），仅在需要时计算
         if (rawMinHeight === Infinity) rawMinHeight = 0;
         if (rawMaxHeight === -Infinity) rawMaxHeight = 1;
-        autoCalculateBestContourSpacing(rawMinHeight, rawMaxHeight);
+        if (!skipContourCalc) {
+            autoCalculateBestContourSpacing(rawMinHeight, rawMaxHeight);
+        }
 
         material = new THREE.MeshStandardMaterial({ roughness: 0.8, metalness: 0.1 });
         if(customTexture) material.map = customTexture;
@@ -2464,7 +2468,9 @@
         return function(shader) {
             shader.uniforms.uPalette = { value: currentPalette.map(c => new THREE.Color(c)) };
             shader.uniforms.uSmooth = { value: isSmoothMode ? 1.0 : 0.0 };
-            shader.uniforms.uShowContour = { value: 0.0 };
+            // 读取当前等高线状态
+            const contourToggle = document.getElementById('contour-toggle');
+            shader.uniforms.uShowContour = { value: contourToggle && contourToggle.checked ? 1.0 : 0.0 };
             shader.uniforms.uRemovePalette = { value: 0.0 };
             shader.uniforms.uContourSpacing = { value: 10.0 };
             shader.uniforms.uContourWidth = { value: 1.0 };
@@ -2475,6 +2481,9 @@
             shader.uniforms.uRawHeightRange = { value: rangeH };
             
             material.userData.shader = shader;
+            
+            // 立即更新uniforms以使用当前UI值
+            setTimeout(() => updateUniforms(), 0);
 
             shader.vertexShader = `
                 attribute float aRawElevation;
@@ -4023,7 +4032,10 @@
         const val = logarithmicTransform(sliderValue, 0.01, 30);
         document.getElementById('height-val').innerText = val.toFixed(2) + 'x';
         
-        // 重新构建地形以更新基座和方位标记
+        // 记录等高线是否开启
+        const contourEnabled = document.getElementById('contour-toggle').checked;
+        
+        // 重新构建地形以更新基座和方位标记，跳过等高距计算
         const canvas = document.createElement('canvas');
         canvas.width = rawWidth;
         canvas.height = rawHeight;
@@ -4037,7 +4049,12 @@
             imgData.data[i * 4 + 3] = 255;
         }
         ctx.putImageData(imgData, 0, 0);
-        buildTerrain(canvas);
+        buildTerrain(canvas, true);  // 传入true跳过等高距计算
+        
+        // 如果等高线是开启的，刷新等高线显示
+        if (contourEnabled) {
+            updateUniforms();
+        }
     }
 
     function updateDetail() {
