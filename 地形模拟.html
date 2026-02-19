@@ -658,9 +658,9 @@
                     const y = Math.floor((1 - uv.y) * (rawHeight - 1));
                     const grayValue = heightData[y * rawWidth + x];
                     
-                    // 计算实际高程值（使用实际高程范围）
-                    const elevationRange = window.rawElevationRange ? window.rawElevationRange.range : 50;
-                    const minElevation = window.rawElevationRange ? window.rawElevationRange.min : 0;
+                    // 计算实际高程值（使用demInfo中的实际高程范围）
+                    const elevationRange = (window.demInfo && window.demInfo.elevationRange) ? window.demInfo.elevationRange : 50;
+                    const minElevation = (window.demInfo && window.demInfo.min) ? window.demInfo.min : 0;
                     const actualElevation = minElevation + (grayValue / 255) * elevationRange;
                     
                     if (window.currentToolMode === 'marker') {
@@ -2472,8 +2472,13 @@
             const contourToggle = document.getElementById('contour-toggle');
             shader.uniforms.uShowContour = { value: contourToggle && contourToggle.checked ? 1.0 : 0.0 };
             shader.uniforms.uRemovePalette = { value: 0.0 };
-            shader.uniforms.uContourSpacing = { value: 10.0 };
-            shader.uniforms.uContourWidth = { value: 1.0 };
+            // 直接读取当前等高距设置
+            const contourSliderValue = parseFloat(document.getElementById('contour-spacing').value);
+            const contourLogValue = logarithmicTransform(contourSliderValue, 1, 50);
+            const actualContourSpacing = calculateActualContourSpacing(contourLogValue);
+            const grayContourSpacing = convertToGrayContourSpacing(actualContourSpacing);
+            shader.uniforms.uContourSpacing = { value: grayContourSpacing };
+            shader.uniforms.uContourWidth = { value: parseFloat(document.getElementById('contour-width').value) };
             shader.uniforms.uTextureOpacity = { value: 0.8 };
             shader.uniforms.uBaseColor = { value: new THREE.Color(0x808080) };
             shader.uniforms.uContourColor = { value: new THREE.Color(0xffffff) };
@@ -2481,9 +2486,6 @@
             shader.uniforms.uRawHeightRange = { value: rangeH };
             
             material.userData.shader = shader;
-            
-            // 立即更新uniforms以使用当前UI值
-            setTimeout(() => updateUniforms(), 0);
 
             shader.vertexShader = `
                 attribute float aRawElevation;
@@ -2577,11 +2579,14 @@
         shader.uniforms.uSmooth.value = isSmoothMode ? 1.0 : 0.0;
         shader.uniforms.uShowContour.value = document.getElementById('contour-toggle').checked ? 1.0 : 0.0;
         shader.uniforms.uRemovePalette.value = document.getElementById('remove-palette-toggle').checked ? 1.0 : 0.0;
-        // 等高距滑块值进行对数变换，然后计算实际等高距
+        // 等高距：UI显示实际高程，shader使用灰度值
         const contourSliderValue = parseFloat(document.getElementById('contour-spacing').value);
         const contourLogValue = logarithmicTransform(contourSliderValue, 1, 50);
+        // 计算实际高程等高距（用于显示）
         const actualContourSpacing = calculateActualContourSpacing(contourLogValue);
-        shader.uniforms.uContourSpacing.value = actualContourSpacing;
+        // 转换为灰度等高距（用于shader绘制）
+        const grayContourSpacing = convertToGrayContourSpacing(actualContourSpacing);
+        shader.uniforms.uContourSpacing.value = grayContourSpacing;
         shader.uniforms.uContourWidth.value = parseFloat(document.getElementById('contour-width').value);
         // 更新原始高程范围uniform
         if (shader.uniforms.uRawHeightRange && window.rawElevationRange) {
@@ -2600,14 +2605,13 @@
 
     // 自动计算最佳等高距
     function autoCalculateBestContourSpacing(minHeight, maxHeight) {
-        const diff = maxHeight - minHeight;
-        // 使用实际计算的高程范围
-        const elevationRange = diff > 0 ? diff : 50;
+        // 使用实际高程范围（来自demInfo，单位：米）
+        const elevationRange = (window.demInfo && window.demInfo.elevationRange) ? window.demInfo.elevationRange : 50;
         
-        if (diff <= 0 || !isFinite(diff)) {
+        if (elevationRange <= 0 || !isFinite(elevationRange)) {
             // 如果高度差为0、负数或无效，使用默认等高距20
             const defaultValue = 20;
-            const x = Math.max(1, Math.round(elevationRange / 50));
+            const x = Math.max(1, Math.round(50 / 50));
             const logRangeValue = Math.max(1, defaultValue / x);
             const sliderValue = inverseLogarithmicTransform(logRangeValue, 1, 50);
             document.getElementById('contour-spacing').value = sliderValue;
@@ -2617,7 +2621,7 @@
         }
         
         // 计算理想的等高距（约12条等高线）
-        let ideal = diff / 12;
+        let ideal = elevationRange / 12;
         
         // 计算数量级
         const magnitude = Math.pow(10, Math.floor(Math.log10(ideal)));
@@ -2637,7 +2641,7 @@
         
         // 转换为滑块值（使用实际高程范围）
         const x = Math.max(1, Math.round(elevationRange / 50));
-        const actualValue = step; // 实际等高距
+        const actualValue = step; // 实际等高距（米）
         const logRangeValue = Math.max(1, actualValue / x); // 基础等高距
         
         // 使用反向对数变换将基础等高距映射回滑块值（范围0-100）
@@ -2653,16 +2657,26 @@
 
     // 计算实际等高距（使用实际高程范围）
     function calculateActualContourSpacing(sliderValue) {
-        // 使用实际计算的高程范围
-        const elevationRange = window.rawElevationRange ? window.rawElevationRange.range : 50;
+        // 使用实际高程范围（来自demInfo，单位：米）
+        const elevationRange = (window.demInfo && window.demInfo.elevationRange) ? window.demInfo.elevationRange : 50;
         const x = Math.max(1, Math.round(elevationRange / 50));
         return sliderValue * x;
     }
 
+    // 将实际高程等高距转换为灰度等高距（用于shader绘制）
+    function convertToGrayContourSpacing(actualSpacing) {
+        // 实际高程范围（米）
+        const actualElevationRange = (window.demInfo && window.demInfo.elevationRange) ? window.demInfo.elevationRange : 50;
+        // 灰度范围（0-255）
+        const grayRange = window.rawElevationRange ? window.rawElevationRange.range : 255;
+        // 转换：实际等高距 / 实际高程范围 * 灰度范围
+        return actualSpacing / actualElevationRange * grayRange;
+    }
+
     // 计算实际等高线高程值（使用实际高程范围和最低高程）
     function calculateActualContourLevel(contourLevel) {
-        const elevationRange = window.rawElevationRange ? window.rawElevationRange.range : 50;
-        const minElevation = window.rawElevationRange ? window.rawElevationRange.min : 0;
+        const elevationRange = (window.demInfo && window.demInfo.elevationRange) ? window.demInfo.elevationRange : 50;
+        const minElevation = (window.demInfo && window.demInfo.min) ? window.demInfo.min : 0;
         const x = Math.max(1, Math.round(elevationRange / 50));
         return contourLevel * x + minElevation;
     }
