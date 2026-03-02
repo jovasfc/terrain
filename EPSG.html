@@ -106,57 +106,50 @@
             <div class="lg:col-span-6">
                 <div class="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
                     <div class="px-4 py-3 border-b border-slate-700 flex items-center justify-between">
-                        <div>
+                        <div class="w-1/4">
                             <h2 id="projection-title" class="font-bold text-lg">WGS 84 / Pseudo-Mercator</h2>
                             <p id="projection-epsg" class="text-sm text-slate-400">EPSG:3857</p>
                         </div>
-                        <div class="flex items-center gap-2 flex-wrap">
-                            <div class="flex items-center gap-1 text-sm">
-                                <label class="text-slate-400">中心经度:</label>
+                        <div class="flex flex-col gap-2">
+                            <div class="flex items-center gap-2">
+                                <label class="text-slate-400 text-sm">中心经度:</label>
                                 <input type="number" id="center-lon" value="0" step="1" min="-180" max="180" 
-                                       class="w-16 px-1 py-0.5 bg-slate-700 border border-slate-600 rounded text-xs">
-                            </div>
-                            <div class="flex items-center gap-1 text-sm">
-                                <label class="text-slate-400">中心纬度:</label>
+                                       class="w-20 px-2 py-1 bg-slate-700 border border-slate-600 rounded text-sm">
+                                <label class="text-slate-400 text-sm">中心纬度:</label>
                                 <input type="number" id="center-lat" value="0" step="1" min="-90" max="90" 
-                                       class="w-16 px-1 py-0.5 bg-slate-700 border border-slate-600 rounded text-xs">
+                                       class="w-20 px-2 py-1 bg-slate-700 border border-slate-600 rounded text-sm">
                             </div>
-                            <div class="flex items-center gap-1 text-sm ml-100">
-                                <label class="text-slate-400">经纬线:</label>
-                                <input type="color" id="graticule-color" value="#ffffff" class="w-6 h-6 rounded cursor-pointer">
-                            </div>
-                            <div class="flex items-center gap-1 text-sm">
-                                <label class="text-slate-400">陆地:</label>
-                                <input type="color" id="land-color" value="#2dd4bf" class="w-6 h-6 rounded cursor-pointer">
-                            </div>
-                            <div class="flex items-center gap-1 text-sm">
-                                <label class="text-slate-400">海洋:</label>
-                                <input type="color" id="ocean-color" value="#1e3a5f" class="w-6 h-6 rounded cursor-pointer">
-                            </div>
-                            <div class="flex items-center gap-1 text-sm">
-                                <label class="text-slate-400">国界:</label>
-                                <input type="color" id="border-color" value="#0d9488" class="w-6 h-6 rounded cursor-pointer">
-                            </div>
-                            <button id="reset-colors" class="px-3 py-1 text-xs bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors">
+                            <div class="flex items-center gap-2">
+                                <label class="text-slate-400 text-sm">经纬线:</label>
+                                <input type="color" id="graticule-color" value="#ffffff" class="w-8 h-8 rounded cursor-pointer">
+                                <label class="text-slate-400 text-sm">陆地:</label>
+                                <input type="color" id="land-color" value="#2dd4bf" class="w-8 h-8 rounded cursor-pointer">
+                                <label class="text-slate-400 text-sm">海洋:</label>
+                                <input type="color" id="ocean-color" value="#1e3a5f" class="w-8 h-8 rounded cursor-pointer">
+                                <label class="text-slate-400 text-sm">国界:</label>
+                                <input type="color" id="border-color" value="#0d9488" class="w-8 h-8 rounded cursor-pointer">
+
+                            <button id="reset-colors" class="px-3 py-1 text-sm bg-green-800 hover:bg-green-900 rounded-lg transition-colors w-fit">
                                 默认颜色
                             </button>
-                            <label class="flex items-center gap-2 text-sm">
+                            </div>
+                            <div class="flex items-center gap-2">
                                 <input type="checkbox" id="show-graticule" checked class="rounded">
-                                <span class="text-slate-400">经纬网</span>
-                            </label>
-                            <label class="flex items-center gap-2 text-sm">
+                                <label class="text-slate-400 text-sm">经纬网</label>
+
                                 <input type="checkbox" id="show-sphere" checked class="rounded">
-                                <span class="text-slate-400">球体轮廓</span>
-                            </label>
-                            <button id="reset-zoom" class="px-3 py-1 text-xs bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors">
-                                重置缩放
-                            </button>
-                            <button id="export-png" class="px-3 py-1 text-xs bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors">
-                                导出PNG
-                            </button>
-                            <button id="export-svg" class="px-3 py-1 text-xs bg-purple-600 hover:bg-purple-700 rounded-lg transition-colors">
-                                导出SVG
-                            </button>
+                                <label class="text-slate-400 text-sm">球体轮廓</label>
+
+                                <button id="reset-zoom" class="px-3 py-1 text-sm bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors">
+                                    重置缩放
+                                </button>
+                                <button id="export-png" class="px-3 py-1 text-sm bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors">
+                                    导出PNG
+                                </button>
+                                <button id="export-svg" class="px-3 py-1 text-sm bg-purple-600 hover:bg-purple-700 rounded-lg transition-colors">
+                                    导出SVG
+                                </button>
+                            </div>
                         </div>
                     </div>
                     <div class="map-container h-[500px] relative">
