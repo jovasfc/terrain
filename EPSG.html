@@ -47,17 +47,12 @@
         }
         .graticule {
             fill: none;
-            stroke: rgba(255,255,255,0.1);
             stroke-width: 0.5px;
         }
         .land {
-            fill: #2dd4bf;
-            stroke: #0d9488;
             stroke-width: 0.5px;
         }
         .sphere {
-            fill: rgba(30, 58, 95, 0.3);
-            stroke: rgba(255,255,255,0.2);
             stroke-width: 1px;
         }
     </style>
@@ -126,6 +121,25 @@
                                 <input type="number" id="center-lat" value="0" step="1" min="-90" max="90" 
                                        class="w-16 px-1 py-0.5 bg-slate-700 border border-slate-600 rounded text-xs">
                             </div>
+                            <div class="flex items-center gap-1 text-sm ml-100">
+                                <label class="text-slate-400">经纬线:</label>
+                                <input type="color" id="graticule-color" value="#ffffff" class="w-6 h-6 rounded cursor-pointer">
+                            </div>
+                            <div class="flex items-center gap-1 text-sm">
+                                <label class="text-slate-400">陆地:</label>
+                                <input type="color" id="land-color" value="#2dd4bf" class="w-6 h-6 rounded cursor-pointer">
+                            </div>
+                            <div class="flex items-center gap-1 text-sm">
+                                <label class="text-slate-400">海洋:</label>
+                                <input type="color" id="ocean-color" value="#1e3a5f" class="w-6 h-6 rounded cursor-pointer">
+                            </div>
+                            <div class="flex items-center gap-1 text-sm">
+                                <label class="text-slate-400">国界:</label>
+                                <input type="color" id="border-color" value="#0d9488" class="w-6 h-6 rounded cursor-pointer">
+                            </div>
+                            <button id="reset-colors" class="px-3 py-1 text-xs bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors">
+                                默认颜色
+                            </button>
                             <label class="flex items-center gap-2 text-sm">
                                 <input type="checkbox" id="show-graticule" checked class="rounded">
                                 <span class="text-slate-400">经纬网</span>
@@ -1542,6 +1556,10 @@
             try {
                 const centerLon = parseFloat(document.getElementById('center-lon').value) || 0;
                 const centerLat = parseFloat(document.getElementById('center-lat').value) || 0;
+                const graticuleColor = document.getElementById('graticule-color').value;
+                const landColor = document.getElementById('land-color').value;
+                const oceanColor = document.getElementById('ocean-color').value;
+                const borderColor = document.getElementById('border-color').value;
                 
                 const projection = currentProjection.d3Projection
                     .translate([width / 2, height / 2])
@@ -1559,8 +1577,10 @@
                     g.append('path')
                         .datum(sphere)
                         .attr('class', 'sphere')
-                        .attr('fill', 'rgba(30, 58, 95, 0.3)')
-                        .attr('stroke', 'rgba(255,255,255,0.2)')
+                        .attr('fill', oceanColor)
+                        .attr('fill-opacity', '0.3')
+                        .attr('stroke', graticuleColor)
+                        .attr('stroke-opacity', '0.2')
                         .attr('stroke-width', '1px')
                         .attr('d', path);
                 }
@@ -1572,7 +1592,8 @@
                         .datum(graticule())
                         .attr('class', 'graticule')
                         .attr('fill', 'none')
-                        .attr('stroke', 'rgba(255,255,255,0.1)')
+                        .attr('stroke', graticuleColor)
+                        .attr('stroke-opacity', '0.3')
                         .attr('stroke-width', '0.5px')
                         .attr('d', path);
                 }
@@ -1583,8 +1604,8 @@
                     g.append('path')
                         .datum(land)
                         .attr('class', 'land')
-                        .attr('fill', '#2dd4bf')
-                        .attr('stroke', '#0d9488')
+                        .attr('fill', landColor)
+                        .attr('stroke', borderColor)
                         .attr('stroke-width', '0.5px')
                         .attr('d', path);
                 }
@@ -1662,9 +1683,24 @@
             document.getElementById('show-graticule').addEventListener('change', renderMap);
             document.getElementById('show-sphere').addEventListener('change', renderMap);
 
+            // 颜色设置
+            document.getElementById('graticule-color').addEventListener('input', renderMap);
+            document.getElementById('land-color').addEventListener('input', renderMap);
+            document.getElementById('ocean-color').addEventListener('input', renderMap);
+            document.getElementById('border-color').addEventListener('input', renderMap);
+
             // 中心点设置
             document.getElementById('center-lon').addEventListener('change', renderMap);
             document.getElementById('center-lat').addEventListener('change', renderMap);
+
+            // 恢复默认颜色
+            document.getElementById('reset-colors').addEventListener('click', () => {
+                document.getElementById('graticule-color').value = '#ffffff';
+                document.getElementById('land-color').value = '#2dd4bf';
+                document.getElementById('ocean-color').value = '#1e3a5f';
+                document.getElementById('border-color').value = '#0d9488';
+                renderMap();
+            });
 
             // 重置缩放
             document.getElementById('reset-zoom').addEventListener('click', () => {
@@ -1677,21 +1713,29 @@
                 const svgElement = document.getElementById('map-svg');
                 const svgClone = svgElement.cloneNode(true);
                 
+                const graticuleColor = document.getElementById('graticule-color').value;
+                const landColor = document.getElementById('land-color').value;
+                const oceanColor = document.getElementById('ocean-color').value;
+                const borderColor = document.getElementById('border-color').value;
+                
                 const styleElement = document.createElement('style');
                 styleElement.textContent = `
                     .graticule {
                         fill: none;
-                        stroke: rgba(255,255,255,0.1);
+                        stroke: ${graticuleColor};
+                        stroke-opacity: 0.3;
                         stroke-width: 0.5px;
                     }
                     .land {
-                        fill: #2dd4bf;
-                        stroke: #0d9488;
+                        fill: ${landColor};
+                        stroke: ${borderColor};
                         stroke-width: 0.5px;
                     }
                     .sphere {
-                        fill: rgba(30, 58, 95, 0.3);
-                        stroke: rgba(255,255,255,0.2);
+                        fill: ${oceanColor};
+                        fill-opacity: 0.3;
+                        stroke: ${graticuleColor};
+                        stroke-opacity: 0.2;
                         stroke-width: 1px;
                     }
                 `;
@@ -1710,7 +1754,7 @@
                 const url = URL.createObjectURL(svgBlob);
                 
                 img.onload = function() {
-                    ctx.fillStyle = '#1e3a5f';
+                    ctx.fillStyle = oceanColor;
                     ctx.fillRect(0, 0, canvas.width, canvas.height);
                     ctx.drawImage(img, 0, 0, svgSize.width, svgSize.height);
                     URL.revokeObjectURL(url);
@@ -1734,21 +1778,29 @@
                 const svgElement = document.getElementById('map-svg');
                 const svgClone = svgElement.cloneNode(true);
                 
+                const graticuleColor = document.getElementById('graticule-color').value;
+                const landColor = document.getElementById('land-color').value;
+                const oceanColor = document.getElementById('ocean-color').value;
+                const borderColor = document.getElementById('border-color').value;
+                
                 const styleElement = document.createElement('style');
                 styleElement.textContent = `
                     .graticule {
                         fill: none;
-                        stroke: rgba(255,255,255,0.1);
+                        stroke: ${graticuleColor};
+                        stroke-opacity: 0.3;
                         stroke-width: 0.5px;
                     }
                     .land {
-                        fill: #2dd4bf;
-                        stroke: #0d9488;
+                        fill: ${landColor};
+                        stroke: ${borderColor};
                         stroke-width: 0.5px;
                     }
                     .sphere {
-                        fill: rgba(30, 58, 95, 0.3);
-                        stroke: rgba(255,255,255,0.2);
+                        fill: ${oceanColor};
+                        fill-opacity: 0.3;
+                        stroke: ${graticuleColor};
+                        stroke-opacity: 0.2;
                         stroke-width: 1px;
                     }
                 `;
