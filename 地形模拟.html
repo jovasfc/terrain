@@ -40,6 +40,30 @@
         .controls-panel { top: 20px; left: 20px; width: 300px; }
         .palette-panel { top: 20px; right: 20px; width: 280px; }
 
+        .drawing-toolbar {
+            position: absolute;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(18, 18, 21, 0.9);
+            backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: #e4e4e7;
+            border-radius: 16px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            z-index: 100;
+            padding: 12px 16px;
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .drawing-toolbar .btn-action {
+            width: auto;
+            min-width: 50px;
+            padding: 8px 16px;
+        }
+
         .section-title {
             font-size: 0.65rem; text-transform: uppercase; color: #71717a;
             letter-spacing: 0.15em; margin-bottom: 0.8rem; margin-top: 1.2rem;
@@ -356,6 +380,10 @@
             </div>
             <div>
                 <div class="flex justify-between mb-1 text-[10px] text-zinc-400">
+                    <label>显示纹理</label>
+                    <input type="checkbox" id="show-texture-toggle" class="w-4 h-4 accent-blue-500" checked>
+                </div>
+                <div class="flex justify-between mb-1 text-[10px] text-zinc-400">
                     <label>纹理透明度</label>
                     <span id="texture-opacity-val" class="text-zinc-500 font-mono">80%</span>
                 </div>
@@ -459,6 +487,18 @@
     </div>
 </div>
 
+<!-- 底部绘制工具条 -->
+<div class="drawing-toolbar">
+    <button id="draw-point" class="btn-action">点</button>
+    <button id="draw-line" class="btn-action">线</button>
+    <button id="draw-polygon" class="btn-action">面</button>
+    <button id="draw-arrow" class="btn-action">箭头</button>
+    <div style="width: 1px; height: 24px; background: rgba(255,255,255,0.1); margin: 0 4px;"></div>
+    <button id="calc-line-length" class="btn-action">计算长度</button>
+    <button id="draw-profile" class="btn-action">剖面图</button>
+    <button id="clear-drawings" class="btn-action btn-danger">清除绘制</button>
+</div>
+
 <!-- 右侧配色面板 -->
 <div class="panel palette-panel" id="color-panel">
     <div class="panel-header" onclick="togglePanel('color-panel')">
@@ -485,14 +525,42 @@
     </div>
 </div>
 
+<!-- 剖面图面板 -->
+<div class="panel palette-panel" id="profile-panel" style="display: none; top: 20px; right: 320px; width: 400px;">
+    <div class="panel-header" style="cursor: move;">
+        <div class="section-title !m-0" onclick="togglePanel('profile-panel')">地形剖面图</div>
+        <button onclick="document.getElementById('profile-panel').style.display='none'" class="text-slate-400 hover:text-white text-lg leading-none">&times;</button>
+    </div>
+    <div class="panel-content">
+        <canvas id="profile-canvas" width="350" height="250" style="background: #1f2937; border-radius: 8px; width: 100%;"></canvas>
+        <div id="profile-info" class="mt-3 text-xs text-slate-400"></div>
+    </div>
+</div>
+
 <script>
     let scene, camera, renderer, controls, terrain, geometry, material;
     let ambientLight, sunLight;
     let heightData = null, rawWidth = 0, rawHeight = 0;
+    let flowLinesGroup = null;
+    let flowMap = null;
+    let terrainDimensions = { width: 200, height: 200 };
     let customTexture = null;
     let contourLabelsGroup = null;
-    let terrainGroup = null; // 地形组（包含地形、基座、方位标记）
-    let skirtMesh = null, bottomMesh = null; // 基座侧面和底面
+    let terrainGroup = null;
+    let skirtMesh = null, bottomMesh = null;
+    
+    let drawingMode = null;
+    let drawingsGroup = new THREE.Group();
+    let currentDrawing = null;
+    let drawingPoints = [];
+    let raycaster = new THREE.Raycaster();
+    let mouse = new THREE.Vector2();
+    let isDrawing = false;
+    let lastClickTime = 0;
+    let previewLine = null;
+    let previewPoints = [];
+    let previewPointMarkers = [];
+    let tempPreviewMarker = null;
     
     const paletteData = [
         { name: '经典地理', colors: [0x051a10, 0x14311c, 0x2a4d31, 0x4d5d3d, 0x7b6d4e, 0xa38c6d, 0xd4c0a1, 0xffffff] },
@@ -563,6 +631,10 @@
         // 地形组（包含地形、基座、方位标记）
         terrainGroup = new THREE.Group();
         scene.add(terrainGroup);
+        
+        // 绘制组
+        scene.add(drawingsGroup);
+        drawingsGroup.renderOrder = 1;
         
         // 工具模式：marker, line, area, none
         window.currentToolMode = 'none';
@@ -940,6 +1012,15 @@
             if(material) material.wireframe = this.classList.contains('active');
         });
         
+        document.getElementById('river-toggle').addEventListener('click', function() {
+            this.classList.toggle('active');
+            if (this.classList.contains('active')) {
+                showFlowLines();
+            } else {
+                hideFlowLines();
+            }
+        });
+        
         document.getElementById('ambient-intensity').addEventListener('input', function() {
             ambientLight.intensity = parseFloat(this.value);
             document.getElementById('ambient-val').innerText = this.value;
@@ -1056,6 +1137,22 @@
             }
         });
         
+        // 绘制工具事件
+        document.getElementById('draw-point').addEventListener('click', () => setDrawingMode('point'));
+        document.getElementById('draw-line').addEventListener('click', () => setDrawingMode('line'));
+        document.getElementById('draw-polygon').addEventListener('click', () => setDrawingMode('polygon'));
+        document.getElementById('draw-arrow').addEventListener('click', () => setDrawingMode('arrow'));
+        document.getElementById('clear-drawings').addEventListener('click', clearDrawings);
+        document.getElementById('calc-line-length').addEventListener('click', calculateLineLengths);
+        document.getElementById('draw-profile').addEventListener('click', generateProfile);
+        document.getElementById('show-texture-toggle').addEventListener('change', toggleTexture);
+        
+        // 绘制鼠标事件
+        renderer.domElement.addEventListener('mousedown', onDrawingMouseDown);
+        renderer.domElement.addEventListener('mousemove', onDrawingMouseMove);
+        renderer.domElement.addEventListener('mouseup', onDrawingMouseUp);
+        renderer.domElement.addEventListener('click', onDrawingClick);
+        
         // 工具条拖拽和折叠功能
         const toolbar = document.getElementById('toolbar');
         const toggleBtn = document.getElementById('toolbar-toggle-btn');
@@ -1095,6 +1192,36 @@
         });
 
         window.addEventListener('resize', onWindowResize);
+
+        // 剖面图面板拖拽功能
+        const profilePanel = document.getElementById('profile-panel');
+        let profileIsDragging = false;
+        let profileDragOffsetX = 0;
+        let profileDragOffsetY = 0;
+        
+        profilePanel.querySelector('.panel-header').addEventListener('mousedown', (e) => {
+            if (e.target.tagName === 'BUTTON') return;
+            profileIsDragging = true;
+            profileDragOffsetX = e.clientX - profilePanel.offsetLeft;
+            profileDragOffsetY = e.clientY - profilePanel.offsetTop;
+            profilePanel.style.cursor = 'grabbing';
+        });
+        
+        document.addEventListener('mousemove', (e) => {
+            if (!profileIsDragging) return;
+            const newX = e.clientX - profileDragOffsetX;
+            const newY = e.clientY - profileDragOffsetY;
+            profilePanel.style.left = newX + 'px';
+            profilePanel.style.top = newY + 'px';
+            profilePanel.style.right = 'auto';
+        });
+        
+        document.addEventListener('mouseup', () => {
+            if (profileIsDragging) {
+                profileIsDragging = false;
+                profilePanel.style.cursor = '';
+            }
+        });
 
         // 检查URL参数，自动加载IndexedDB中的ZIP
         const urlParams = new URLSearchParams(window.location.search);
@@ -1633,6 +1760,8 @@
         terrain = new THREE.Mesh(geometry, material);
         terrain.receiveShadow = terrain.castShadow = true;
         terrainGroup.add(terrain);
+        
+        terrainDimensions = { width: terrainWidth, height: terrainHeight };
         
         // 添加基座和方位标记
         addBaseAndDirections(terrainWidth, terrainHeight, segs, heightScale, scaleMultiplier, maxHeight);
@@ -2456,6 +2585,8 @@
         terrain.receiveShadow = terrain.castShadow = true;
         terrainGroup.add(terrain);
         
+        terrainDimensions = { width: terrainWidth, height: terrainHeight };
+        
         // 添加基座和方位标记
         addBaseAndDirections(terrainWidth, terrainHeight, segs, heightScale, scaleMultiplier, maxHeight);
         updateUniforms();
@@ -2480,6 +2611,7 @@
             shader.uniforms.uContourSpacing = { value: grayContourSpacing };
             shader.uniforms.uContourWidth = { value: parseFloat(document.getElementById('contour-width').value) };
             shader.uniforms.uTextureOpacity = { value: 0.8 };
+            shader.uniforms.uShowTexture = { value: 1.0 };
             shader.uniforms.uBaseColor = { value: new THREE.Color(0x808080) };
             shader.uniforms.uContourColor = { value: new THREE.Color(0xffffff) };
             shader.uniforms.uRawMinHeight = { value: minH };
@@ -2506,6 +2638,7 @@
                 uniform float uContourSpacing;
                 uniform float uContourWidth;
                 uniform float uTextureOpacity;
+                uniform float uShowTexture;
                 uniform vec3 uBaseColor;
                 uniform vec3 uContourColor;
                 uniform float uRawMinHeight;
@@ -2537,8 +2670,10 @@
                 diffuseColor.rgb = finalColor;
 
                 #ifdef USE_MAP
-                    vec4 texColor = texture2D(map, vUv);
-                    diffuseColor.rgb = mix(diffuseColor.rgb, texColor.rgb, uTextureOpacity * texColor.a);
+                    if(uShowTexture > 0.5) {
+                        vec4 texColor = texture2D(map, vUv);
+                        diffuseColor.rgb = mix(diffuseColor.rgb, texColor.rgb, uTextureOpacity * texColor.a);
+                    }
                 #endif
 
                 if(uShowContour > 0.5) {
@@ -4355,6 +4490,1000 @@
         } catch (err) {
             console.error('加载纹理失败:', err);
         }
+    }
+
+    function toggleTexture() {
+        const showTexture = document.getElementById('show-texture-toggle').checked;
+        if (material && material.userData && material.userData.shader) {
+            material.userData.shader.uniforms.uShowTexture.value = showTexture ? 1.0 : 0.0;
+            material.needsUpdate = true;
+        }
+    }
+
+    function setDrawingMode(mode) {
+        if (drawingMode === mode) {
+            drawingMode = null;
+            document.querySelectorAll('#draw-point, #draw-line, #draw-polygon, #draw-arrow').forEach(btn => btn.classList.remove('active'));
+        } else {
+            drawingMode = mode;
+            document.querySelectorAll('#draw-point, #draw-line, #draw-polygon, #draw-arrow').forEach(btn => btn.classList.remove('active'));
+            document.getElementById('draw-' + mode).classList.add('active');
+        }
+        isDrawing = false;
+        drawingPoints = [];
+        if (currentDrawing) {
+            drawingsGroup.remove(currentDrawing);
+            currentDrawing = null;
+        }
+        if (previewLine) {
+            drawingsGroup.remove(previewLine);
+            previewLine = null;
+        }
+        previewPointMarkers.forEach(marker => {
+            drawingsGroup.remove(marker);
+        });
+        previewPointMarkers = [];
+        if (tempPreviewMarker) {
+            drawingsGroup.remove(tempPreviewMarker);
+            tempPreviewMarker = null;
+        }
+    }
+
+    function clearDrawings() {
+        while (drawingsGroup.children.length > 0) {
+            drawingsGroup.remove(drawingsGroup.children[0]);
+        }
+        drawingPoints = [];
+        currentDrawing = null;
+    }
+
+    function onDrawingMouseDown(event) {
+        if (!drawingMode) return;
+        isDrawing = true;
+    }
+
+    function onDrawingMouseMove(event) {
+        if (!drawingMode || !isDrawing) return;
+        
+        mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+        mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+        
+        raycaster.setFromCamera(mouse, camera);
+        const intersects = raycaster.intersectObject(terrain);
+        
+        if (intersects.length > 0) {
+            const point = intersects[0].point;
+            
+            if (drawingMode === 'point') {
+                if (currentDrawing) {
+                    drawingsGroup.remove(currentDrawing);
+                }
+                currentDrawing = createPointMarker(point);
+                drawingsGroup.add(currentDrawing);
+            } else if (drawingMode === 'line' && drawingPoints.length > 0) {
+                if (previewLine) {
+                    drawingsGroup.remove(previewLine);
+                }
+                const tempPoints = [...drawingPoints, point];
+                previewLine = createPolyline(tempPoints);
+                drawingsGroup.add(previewLine);
+                
+                if (tempPreviewMarker) {
+                    drawingsGroup.remove(tempPreviewMarker);
+                }
+                tempPreviewMarker = createPreviewPointMarker(point);
+                drawingsGroup.add(tempPreviewMarker);
+            } else if (drawingMode === 'polygon' && drawingPoints.length > 0) {
+                if (previewLine) {
+                    drawingsGroup.remove(previewLine);
+                }
+                const tempPoints = [...drawingPoints, point];
+                previewLine = createPolyline(tempPoints);
+                drawingsGroup.add(previewLine);
+                
+                if (tempPreviewMarker) {
+                    drawingsGroup.remove(tempPreviewMarker);
+                }
+                tempPreviewMarker = createPreviewPointMarker(point);
+                drawingsGroup.add(tempPreviewMarker);
+            } else if (drawingMode === 'arrow' && drawingPoints.length === 1) {
+                if (previewLine) {
+                    drawingsGroup.remove(previewLine);
+                }
+                const tempPoints = [drawingPoints[0], point];
+                previewLine = createArrow(tempPoints[0], tempPoints[1]);
+                drawingsGroup.add(previewLine);
+                
+                if (tempPreviewMarker) {
+                    drawingsGroup.remove(tempPreviewMarker);
+                }
+                tempPreviewMarker = createPreviewPointMarker(point);
+                drawingsGroup.add(tempPreviewMarker);
+            }
+        }
+    }
+
+    function onDrawingMouseUp(event) {
+        if (!drawingMode) return;
+        isDrawing = false;
+    }
+
+    function onDrawingClick(event) {
+        if (!drawingMode) return;
+        
+        const currentTime = Date.now();
+        const isDoubleClick = (currentTime - lastClickTime) < 300;
+        lastClickTime = currentTime;
+        
+        mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+        mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+        
+        raycaster.setFromCamera(mouse, camera);
+        const intersects = raycaster.intersectObject(terrain);
+        
+        if (intersects.length > 0) {
+            const point = intersects[0].point;
+            
+            if (drawingMode === 'point') {
+                if (currentDrawing) {
+                    drawingsGroup.remove(currentDrawing);
+                }
+                currentDrawing = createPointMarker(point);
+                drawingsGroup.add(currentDrawing);
+                currentDrawing = null;
+            } else if (drawingMode === 'line') {
+                if (isDoubleClick && drawingPoints.length >= 2) {
+                    const polyline = createPolyline(drawingPoints);
+                    drawingsGroup.add(polyline);
+                    
+                    previewPointMarkers.forEach(marker => {
+                        drawingsGroup.remove(marker);
+                    });
+                    previewPointMarkers = [];
+                    
+                    if (previewLine) {
+                        drawingsGroup.remove(previewLine);
+                        previewLine = null;
+                    }
+                    
+                    drawingPoints = [];
+                    previewPoints = [];
+                } else {
+                    drawingPoints.push(point);
+                    
+                    if (previewLine) {
+                        drawingsGroup.remove(previewLine);
+                        previewLine = null;
+                    }
+                    
+                    if (tempPreviewMarker) {
+                        drawingsGroup.remove(tempPreviewMarker);
+                        tempPreviewMarker = null;
+                    }
+                    
+                    previewPoints.push(point);
+                    
+                    const pointMarker = createPreviewPointMarker(point);
+                    drawingsGroup.add(pointMarker);
+                    previewPointMarkers.push(pointMarker);
+                    
+                    if (drawingPoints.length >= 2) {
+                        previewLine = createPolyline(drawingPoints);
+                        drawingsGroup.add(previewLine);
+                    }
+                }
+            } else if (drawingMode === 'polygon') {
+                if (isDoubleClick && drawingPoints.length >= 3) {
+                    const polygon = createPolygon(drawingPoints);
+                    drawingsGroup.add(polygon);
+                    
+                    previewPointMarkers.forEach(marker => {
+                        drawingsGroup.remove(marker);
+                    });
+                    previewPointMarkers = [];
+                    
+                    if (previewLine) {
+                        drawingsGroup.remove(previewLine);
+                        previewLine = null;
+                    }
+                    
+                    drawingPoints = [];
+                    previewPoints = [];
+                } else if (!isDoubleClick) {
+                    drawingPoints.push(point);
+                    
+                    if (previewLine) {
+                        drawingsGroup.remove(previewLine);
+                        previewLine = null;
+                    }
+                    
+                    if (tempPreviewMarker) {
+                        drawingsGroup.remove(tempPreviewMarker);
+                        tempPreviewMarker = null;
+                    }
+                    
+                    previewPoints.push(point);
+                    
+                    const pointMarker = createPreviewPointMarker(point);
+                    drawingsGroup.add(pointMarker);
+                    previewPointMarkers.push(pointMarker);
+                    
+                    if (drawingPoints.length >= 2) {
+                        previewLine = createPolyline(drawingPoints);
+                        drawingsGroup.add(previewLine);
+                    }
+                }
+            } else if (drawingMode === 'arrow') {
+                drawingPoints.push(point);
+                
+                if (tempPreviewMarker) {
+                    drawingsGroup.remove(tempPreviewMarker);
+                    tempPreviewMarker = null;
+                }
+                
+                if (previewLine) {
+                    drawingsGroup.remove(previewLine);
+                    previewLine = null;
+                }
+                
+                if (drawingPoints.length === 2) {
+                    const arrow = createArrow(drawingPoints[0], drawingPoints[1]);
+                    drawingsGroup.add(arrow);
+                    
+                    previewPointMarkers.forEach(marker => {
+                        drawingsGroup.remove(marker);
+                    });
+                    previewPointMarkers = [];
+                    
+                    drawingPoints = [];
+                    previewPoints = [];
+                } else {
+                    previewPoints.push(point);
+                    
+                    const pointMarker = createPreviewPointMarker(point);
+                    drawingsGroup.add(pointMarker);
+                    previewPointMarkers.push(pointMarker);
+                }
+            }
+        }
+    }
+
+    function createPreviewPointMarker(position) {
+        const geometry = new THREE.SphereGeometry(0.8, 16, 16);
+        const material = new THREE.MeshBasicMaterial({ 
+            color: 0x00ff00,
+            depthTest: false,
+            depthWrite: false
+        });
+        const marker = new THREE.Mesh(geometry, material);
+        marker.position.copy(position);
+        marker.position.y += 0.8;
+        marker.renderOrder = 2;
+        return marker;
+    }
+
+    function createPointMarker(position) {
+        const group = new THREE.Group();
+        
+        const pinHeight = 6;
+        const pinHeadRadius = 2.5;
+        
+        const pinBodyGeometry = new THREE.CylinderGeometry(0.8, 0.3, pinHeight, 16);
+        const pinBodyMaterial = new THREE.MeshBasicMaterial({ 
+            color: 0xff0000,
+            depthTest: false,
+            depthWrite: false
+        });
+        const pinBody = new THREE.Mesh(pinBodyGeometry, pinBodyMaterial);
+        pinBody.position.copy(position);
+        pinBody.position.y += pinHeight / 2 + 0.5;
+        pinBody.renderOrder = 2;
+        
+        const pinHeadGeometry = new THREE.SphereGeometry(pinHeadRadius, 32, 32);
+        const pinHeadMaterial = new THREE.MeshBasicMaterial({ 
+            color: 0xff0000,
+            depthTest: false,
+            depthWrite: false
+        });
+        const pinHead = new THREE.Mesh(pinHeadGeometry, pinHeadMaterial);
+        pinHead.position.copy(position);
+        pinHead.position.y += pinHeight + 0.5;
+        pinHead.renderOrder = 2;
+        
+        const pinCenterGeometry = new THREE.SphereGeometry(1.2, 32, 32);
+        const pinCenterMaterial = new THREE.MeshBasicMaterial({ 
+            color: 0xffffff,
+            depthTest: false,
+            depthWrite: false
+        });
+        const pinCenter = new THREE.Mesh(pinCenterGeometry, pinCenterMaterial);
+        pinCenter.position.copy(position);
+        pinCenter.position.y += pinHeight + 0.5;
+        pinCenter.renderOrder = 2;
+        
+        const shadowGeometry = new THREE.CircleGeometry(pinHeadRadius * 0.8, 32);
+        const shadowMaterial = new THREE.MeshBasicMaterial({ 
+            color: 0x000000,
+            transparent: true,
+            opacity: 0.3,
+            depthTest: false,
+            depthWrite: false
+        });
+        const shadow = new THREE.Mesh(shadowGeometry, shadowMaterial);
+        shadow.position.copy(position);
+        shadow.rotation.x = -Math.PI / 2;
+        shadow.position.y += 0.1;
+        shadow.renderOrder = 2;
+        
+        group.add(pinBody);
+        group.add(pinHead);
+        group.add(pinCenter);
+        group.add(shadow);
+        
+        return group;
+    }
+
+    function createPolygon(points) {
+        if (points.length < 3) return null;
+        
+        const vertices = [];
+        for (let i = 0; i < points.length; i++) {
+            vertices.push(points[i].x, points[i].y + 0.5, points[i].z);
+        }
+        
+        const indices = [];
+        for (let i = 2; i < points.length; i++) {
+            indices.push(0, i - 1, i);
+        }
+        
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+        geometry.setIndex(indices);
+        
+        geometry.computeVertexNormals();
+        
+        const material = new THREE.MeshBasicMaterial({ 
+            color: 0x00ffff,
+            transparent: true,
+            opacity: 0.5,
+            depthTest: false,
+            depthWrite: false,
+            side: THREE.DoubleSide
+        });
+        const polygon = new THREE.Mesh(geometry, material);
+        polygon.renderOrder = 1;
+        
+        return polygon;
+    }
+
+    function createArrow(start, end) {
+        const group = new THREE.Group();
+        
+        const direction = new THREE.Vector3().subVectors(end, start);
+        const length = direction.length();
+        const arrowWidth = 1.5;
+        const arrowHeadLength = Math.min(length * 0.3, 8);
+        const arrowHeadWidth = arrowWidth * 2.5;
+        
+        const arrowBodyShape = new THREE.Shape();
+        arrowBodyShape.moveTo(-arrowWidth / 2, 0);
+        arrowBodyShape.lineTo(-arrowWidth / 2, length - arrowHeadLength);
+        arrowBodyShape.lineTo(-arrowHeadWidth / 2, length - arrowHeadLength);
+        arrowBodyShape.lineTo(0, length);
+        arrowBodyShape.lineTo(arrowHeadWidth / 2, length - arrowHeadLength);
+        arrowBodyShape.lineTo(arrowWidth / 2, length - arrowHeadLength);
+        arrowBodyShape.lineTo(arrowWidth / 2, 0);
+        arrowBodyShape.lineTo(-arrowWidth / 2, 0);
+        
+        const geometry = new THREE.ShapeGeometry(arrowBodyShape);
+        const material = new THREE.MeshBasicMaterial({ 
+            color: 0xff00ff,
+            depthTest: false,
+            depthWrite: false,
+            side: THREE.DoubleSide
+        });
+        const arrowMesh = new THREE.Mesh(geometry, material);
+        
+        arrowMesh.position.copy(start);
+        arrowMesh.position.y += 0.5;
+        
+        arrowMesh.rotation.x = -Math.PI / 2;
+        
+        const angle = Math.atan2(direction.x, direction.z);
+        arrowMesh.rotation.z = angle + Math.PI;
+        
+        arrowMesh.renderOrder = 2;
+        
+        group.add(arrowMesh);
+        
+        return group;
+    }
+
+    function createLine(start, end) {
+        const path = new THREE.LineCurve3(start, end);
+        const geometry = new THREE.TubeGeometry(path, 1, 0.8, 8, false);
+        const material = new THREE.MeshBasicMaterial({ 
+            color: 0xffff00,
+            depthTest: false,
+            depthWrite: false
+        });
+        const line = new THREE.Mesh(geometry, material);
+        line.renderOrder = 2;
+        return line;
+    }
+
+    function createPolyline(points) {
+        if (points.length < 2) return null;
+        
+        const curve = new THREE.CatmullRomCurve3(points, false, 'catmullrom', 0.1);
+        const geometry = new THREE.TubeGeometry(curve, points.length * 10, 0.4, 8, false);
+        const material = new THREE.MeshBasicMaterial({ 
+            color: 0xffff00,
+            depthTest: false,
+            depthWrite: false
+        });
+        const polyline = new THREE.Mesh(geometry, material);
+        polyline.renderOrder = 2;
+        return polyline;
+    }
+
+    function calculateLineLengths() {
+        if (!window.terrainRealSize) {
+            alert('请先加载地形数据');
+            return;
+        }
+
+        const lines = drawingsGroup.children.filter(obj => 
+            obj instanceof THREE.Mesh && 
+            obj.geometry instanceof THREE.TubeGeometry
+        );
+
+        if (lines.length === 0) {
+            alert('当前没有绘制的线');
+            return;
+        }
+
+        const size = window.terrainRealSize;
+        let totalLength = 0;
+        let resultText = '线段长度:\n';
+
+        lines.forEach((line, index) => {
+            const geometry = line.geometry;
+            const positions = geometry.attributes.position.array;
+            const radialSegments = geometry.parameters.radialSegments || 8;
+            const pointCount = positions.length / 3;
+
+            let lineLength = 0;
+            const centerLinePoints = [];
+
+            for (let i = 0; i < pointCount; i += radialSegments) {
+                const x = positions[i * 3];
+                const y = positions[i * 3 + 1];
+                const z = positions[i * 3 + 2];
+                centerLinePoints.push(new THREE.Vector3(x, y, z));
+            }
+
+            for (let i = 0; i < centerLinePoints.length - 1; i++) {
+                const p1 = centerLinePoints[i];
+                const p2 = centerLinePoints[i + 1];
+
+                const dx = Math.abs(p2.x - p1.x);
+                const dz = Math.abs(p2.z - p1.z);
+
+                const realDx = (dx / size.displayWidth) * size.realWidthMeters;
+                const realDz = (dz / size.displayHeight) * size.realHeightMeters;
+
+                const segmentLength = Math.sqrt(realDx * realDx + realDz * realDz);
+                lineLength += segmentLength;
+            }
+
+            totalLength += lineLength;
+            resultText += `线 ${index + 1}: ${lineLength.toFixed(2)} m\n`;
+        });
+
+        resultText += `\n总长度: ${totalLength.toFixed(2)} m`;
+        alert(resultText);
+    }
+
+    function generateProfile() {
+        if (!heightData || !terrain) {
+            alert('请先加载地形数据');
+            return;
+        }
+
+        const lines = drawingsGroup.children.filter(obj => 
+            obj instanceof THREE.Mesh && 
+            obj.geometry instanceof THREE.TubeGeometry
+        );
+
+        if (lines.length === 0) {
+            alert('请先绘制一条线来生成剖面图');
+            return;
+        }
+
+        const line = lines[lines.length - 1];
+        const geometry = line.geometry;
+        const positions = geometry.attributes.position.array;
+        const radialSegments = geometry.parameters.radialSegments || 8;
+        const pointCount = positions.length / 3;
+
+        const centerLinePoints = [];
+        for (let i = 0; i < pointCount; i += radialSegments) {
+            const x = positions[i * 3];
+            const y = positions[i * 3 + 1];
+            const z = positions[i * 3 + 2];
+            centerLinePoints.push(new THREE.Vector3(x, y, z));
+        }
+
+        const size = window.terrainRealSize || { displayWidth: terrainDimensions.width, displayHeight: terrainDimensions.height, realWidthMeters: terrainDimensions.width, realHeightMeters: terrainDimensions.height };
+        
+        const elevationRange = (window.demInfo && window.demInfo.elevationRange) ? window.demInfo.elevationRange : 50;
+        const minElevation = (window.demInfo && window.demInfo.min !== undefined) ? window.demInfo.min : 0;
+
+        let totalLineLength = 0;
+        for (let i = 1; i < centerLinePoints.length; i++) {
+            const p1 = centerLinePoints[i - 1];
+            const p2 = centerLinePoints[i];
+            const dx = Math.abs(p2.x - p1.x);
+            const dz = Math.abs(p2.z - p1.z);
+            const realDx = (dx / size.displayWidth) * size.realWidthMeters;
+            const realDz = (dz / size.displayHeight) * size.realHeightMeters;
+            totalLineLength += Math.sqrt(realDx * realDx + realDz * realDz);
+        }
+
+        const sampleCount = Math.max(100, Math.min(500, Math.floor(totalLineLength / 2)));
+        
+        const profileData = [];
+        let totalDistance = 0;
+
+        for (let i = 0; i < sampleCount; i++) {
+            const t = i / (sampleCount - 1);
+            
+            let segmentIndex = 0;
+            let segmentT = 0;
+            let accumulatedLength = 0;
+            
+            for (let j = 1; j < centerLinePoints.length; j++) {
+                const p1 = centerLinePoints[j - 1];
+                const p2 = centerLinePoints[j];
+                const dx = Math.abs(p2.x - p1.x);
+                const dz = Math.abs(p2.z - p1.z);
+                const realDx = (dx / size.displayWidth) * size.realWidthMeters;
+                const realDz = (dz / size.displayHeight) * size.realHeightMeters;
+                const segmentLength = Math.sqrt(realDx * realDx + realDz * realDz);
+                
+                if (accumulatedLength + segmentLength >= t * totalLineLength) {
+                    segmentIndex = j - 1;
+                    if (segmentLength > 0) {
+                        segmentT = (t * totalLineLength - accumulatedLength) / segmentLength;
+                    }
+                    break;
+                }
+                accumulatedLength += segmentLength;
+            }
+
+            const p1 = centerLinePoints[segmentIndex];
+            const p2 = centerLinePoints[Math.min(segmentIndex + 1, centerLinePoints.length - 1)];
+            
+            const worldX = p1.x + (p2.x - p1.x) * segmentT;
+            const worldZ = p1.z + (p2.z - p1.z) * segmentT;
+            
+            const gridX = ((worldX + terrainDimensions.width / 2) / terrainDimensions.width) * rawWidth;
+            const gridZ = ((worldZ + terrainDimensions.height / 2) / terrainDimensions.height) * rawHeight;
+            
+            const x0 = Math.floor(gridX);
+            const z0 = Math.floor(gridZ);
+            const x1 = Math.min(x0 + 1, rawWidth - 1);
+            const z1 = Math.min(z0 + 1, rawHeight - 1);
+            const fx = gridX - x0;
+            const fz = gridZ - z0;
+
+            const clampedX0 = Math.max(0, Math.min(rawWidth - 1, x0));
+            const clampedZ0 = Math.max(0, Math.min(rawHeight - 1, z0));
+            const clampedX1 = Math.max(0, Math.min(rawWidth - 1, x1));
+            const clampedZ1 = Math.max(0, Math.min(rawHeight - 1, z1));
+
+            const v00 = heightData[clampedZ0 * rawWidth + clampedX0];
+            const v10 = heightData[clampedZ0 * rawWidth + clampedX1];
+            const v01 = heightData[clampedZ1 * rawWidth + clampedX0];
+            const v11 = heightData[clampedZ1 * rawWidth + clampedX1];
+
+            const grayValue = v00 * (1 - fx) * (1 - fz) + 
+                             v10 * fx * (1 - fz) + 
+                             v01 * (1 - fx) * fz + 
+                             v11 * fx * fz;
+            
+            const actualElevation = minElevation + (grayValue / 255) * elevationRange;
+            
+            totalDistance = t * totalLineLength;
+            
+            profileData.push({
+                distance: totalDistance,
+                elevation: actualElevation,
+                x: worldX,
+                z: worldZ
+            });
+        }
+
+        drawProfileChart(profileData);
+    }
+
+    function drawProfileChart(profileData) {
+        const panel = document.getElementById('profile-panel');
+        const canvas = document.getElementById('profile-canvas');
+        const ctx = canvas.getContext('2d');
+        const info = document.getElementById('profile-info');
+        
+        panel.style.display = 'block';
+        
+        const width = canvas.width;
+        const height = canvas.height;
+        const padding = { top: 30, right: 20, bottom: 40, left: 50 };
+        const chartWidth = width - padding.left - padding.right;
+        const chartHeight = height - padding.top - padding.bottom;
+
+        ctx.fillStyle = '#1f2937';
+        ctx.fillRect(0, 0, width, height);
+
+        const elevations = profileData.map(d => d.elevation);
+        const distances = profileData.map(d => d.distance);
+        const minElev = Math.min(...elevations);
+        const maxElev = Math.max(...elevations);
+        const maxDist = Math.max(...distances);
+
+        const elevRange = maxElev - minElev || 1;
+        const elevPadding = elevRange * 0.1;
+
+        ctx.strokeStyle = '#374151';
+        ctx.lineWidth = 1;
+        
+        for (let i = 0; i <= 5; i++) {
+            const y = padding.top + (chartHeight / 5) * i;
+            ctx.beginPath();
+            ctx.moveTo(padding.left, y);
+            ctx.lineTo(width - padding.right, y);
+            ctx.stroke();
+            
+            const elev = maxElev + elevPadding - ((elevRange + elevPadding * 2) / 5) * i;
+            ctx.fillStyle = '#9ca3af';
+            ctx.font = '10px sans-serif';
+            ctx.textAlign = 'right';
+            ctx.fillText(elev.toFixed(0) + 'm', padding.left - 5, y + 3);
+        }
+
+        for (let i = 0; i <= 5; i++) {
+            const x = padding.left + (chartWidth / 5) * i;
+            ctx.beginPath();
+            ctx.moveTo(x, padding.top);
+            ctx.lineTo(x, height - padding.bottom);
+            ctx.stroke();
+            
+            const dist = (maxDist / 5) * i;
+            ctx.fillStyle = '#9ca3af';
+            ctx.font = '10px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(dist.toFixed(0) + 'm', x, height - padding.bottom + 15);
+        }
+
+        const gradient = ctx.createLinearGradient(0, padding.top, 0, height - padding.bottom);
+        gradient.addColorStop(0, 'rgba(34, 197, 94, 0.8)');
+        gradient.addColorStop(0.5, 'rgba(132, 204, 22, 0.6)');
+        gradient.addColorStop(1, 'rgba(234, 179, 8, 0.4)');
+
+        ctx.beginPath();
+        ctx.moveTo(padding.left, height - padding.bottom);
+        
+        profileData.forEach((d, i) => {
+            const x = padding.left + (d.distance / maxDist) * chartWidth;
+            const y = padding.top + chartHeight - ((d.elevation - minElev + elevPadding) / (elevRange + elevPadding * 2)) * chartHeight;
+            
+            if (i === 0) {
+                ctx.lineTo(x, y);
+            } else {
+                ctx.lineTo(x, y);
+            }
+        });
+        
+        ctx.lineTo(padding.left + chartWidth, height - padding.bottom);
+        ctx.closePath();
+        ctx.fillStyle = gradient;
+        ctx.fill();
+
+        ctx.beginPath();
+        profileData.forEach((d, i) => {
+            const x = padding.left + (d.distance / maxDist) * chartWidth;
+            const y = padding.top + chartHeight - ((d.elevation - minElev + elevPadding) / (elevRange + elevPadding * 2)) * chartHeight;
+            
+            if (i === 0) {
+                ctx.moveTo(x, y);
+            } else {
+                ctx.lineTo(x, y);
+            }
+        });
+        ctx.strokeStyle = '#22c55e';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        ctx.fillStyle = '#e5e7eb';
+        ctx.font = 'bold 12px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('地形剖面图', width / 2, 18);
+        
+        ctx.font = '10px sans-serif';
+        ctx.fillStyle = '#9ca3af';
+        ctx.fillText('距离 (m)', width / 2, height - 5);
+        
+        ctx.save();
+        ctx.translate(12, height / 2);
+        ctx.rotate(-Math.PI / 2);
+        ctx.fillText('高程 (m)', 0, 0);
+        ctx.restore();
+
+        const totalDist = distances[distances.length - 1];
+        const avgElev = elevations.reduce((a, b) => a + b, 0) / elevations.length;
+        const elevGain = elevations.reduce((gain, elev, i) => {
+            if (i === 0) return 0;
+            const diff = elev - elevations[i - 1];
+            return gain + (diff > 0 ? diff : 0);
+        }, 0);
+        const elevLoss = elevations.reduce((loss, elev, i) => {
+            if (i === 0) return 0;
+            const diff = elev - elevations[i - 1];
+            return loss + (diff < 0 ? -diff : 0);
+        }, 0);
+
+        info.innerHTML = `
+            <div class="grid grid-cols-2 gap-2">
+                <div><span class="text-slate-500">总距离:</span> <span class="text-white">${totalDist.toFixed(1)} m</span></div>
+                <div><span class="text-slate-500">采样点数:</span> <span class="text-white">${profileData.length}</span></div>
+                <div><span class="text-slate-500">最低高程:</span> <span class="text-green-400">${minElev.toFixed(1)} m</span></div>
+                <div><span class="text-slate-500">最高高程:</span> <span class="text-red-400">${maxElev.toFixed(1)} m</span></div>
+                <div><span class="text-slate-500">平均高程:</span> <span class="text-blue-400">${avgElev.toFixed(1)} m</span></div>
+                <div><span class="text-slate-500">高差:</span> <span class="text-yellow-400">${(maxElev - minElev).toFixed(1)} m</span></div>
+                <div><span class="text-slate-500">累计爬升:</span> <span class="text-orange-400">${elevGain.toFixed(1)} m</span></div>
+                <div><span class="text-slate-500">累计下降:</span> <span class="text-cyan-400">${elevLoss.toFixed(1)} m</span></div>
+            </div>
+        `;
+    }
+
+    function showFlowLines() {
+        if (!heightData || !terrain) {
+            alert('请先导入高度图数据');
+            document.getElementById('river-toggle').classList.remove('active');
+            return;
+        }
+
+        if (flowLinesGroup) {
+            if (terrainGroup) {
+                terrainGroup.add(flowLinesGroup);
+            }
+            return;
+        }
+
+        flowMap = new Float32Array(heightData.length);
+        for (let i = 0; i < flowMap.length; i++) {
+            flowMap[i] = 0;
+        }
+
+        calculateFlowMap();
+
+        flowLinesGroup = new THREE.Group();
+        if (terrainGroup) {
+            terrainGroup.add(flowLinesGroup);
+        }
+
+        const gridWidth = rawWidth;
+        const gridHeight = rawHeight;
+
+        for (let y = 1; y < gridHeight - 1; y++) {
+            for (let x = 1; x < gridWidth - 1; x++) {
+                const idx = y * gridWidth + x;
+                if (flowMap[idx] > 2) {
+                    const flow = flowMap[idx];
+                    if (flow > 5) {
+                        const worldPos = getWorldPosition(x, y, heightData[idx]);
+                        const direction = getFlowDirection(x, y);
+                        if (direction) {
+                            const nextPos = getWorldPosition(x + direction.x, y + direction.y, heightData[idx]);
+                            const line = createFlowLine(worldPos, nextPos, flow);
+                            flowLinesGroup.add(line);
+                        }
+                    }
+                }
+            }
+        }
+
+        if (terrainGroup) {
+            terrainGroup.add(flowLinesGroup);
+        }
+    }
+
+    function hideFlowLines() {
+        if (flowLinesGroup && terrainGroup) {
+            terrainGroup.remove(flowLinesGroup);
+            flowLinesGroup = null;
+        }
+    }
+
+    function calculateFlowMap() {
+        if (!heightData || !flowMap) return;
+
+        const gridWidth = rawWidth;
+        const gridHeight = rawHeight;
+        const seaLevel = 0;
+
+        for (let y = 1; y < gridHeight - 1; y++) {
+            for (let x = 1; x < gridWidth - 1; x++) {
+                const idx = y * gridWidth + x;
+                const h = heightData[idx];
+
+                if (h > seaLevel) {
+                    const neighbors = [
+                        { dx: -1, dy: 0 },
+                        { dx: 1, dy: 0 },
+                        { dx: 0, dy: -1 },
+                        { dx: 0, dy: 1 },
+                        { dx: -1, dy: -1 },
+                        { dx: 1, dy: -1 },
+                        { dx: -1, dy: 1 },
+                        { dx: 1, dy: 1 }
+                    ];
+
+                    let maxSlope = 0;
+                    let flowDirection = null;
+
+                    for (const n of neighbors) {
+                        const nx = x + n.dx;
+                        const ny = y + n.dy;
+                        const nIdx = ny * gridWidth + nx;
+                        const nh = heightData[nIdx];
+                        const slope = h - nh;
+
+                        if (slope > maxSlope) {
+                            maxSlope = slope;
+                            flowDirection = n;
+                        }
+                    }
+
+                    if (maxSlope > 0.5) {
+                        flowMap[idx] = maxSlope * 10;
+                    }
+                }
+            }
+        }
+
+        for (let i = 0; i < 3; i++) {
+            diffuseFlow();
+        }
+    }
+
+    function diffuseFlow() {
+        if (!flowMap) return;
+
+        const gridWidth = rawWidth;
+        const gridHeight = rawHeight;
+        const newFlowMap = new Float32Array(flowMap.length);
+
+        for (let y = 1; y < gridHeight - 1; y++) {
+            for (let x = 1; x < gridWidth - 1; x++) {
+                const idx = y * gridWidth + x;
+                const h = heightData[idx];
+
+                if (h > 0) {
+                    let flow = flowMap[idx];
+
+                    if (flow > 0) {
+                        const neighbors = [
+                            { dx: -1, dy: 0, idx: idx - 1 },
+                            { dx: 1, dy: 0, idx: idx + 1 },
+                            { dx: 0, dy: -1, idx: idx - gridWidth },
+                            { dx: 0, dy: 1, idx: idx + gridWidth }
+                        ];
+
+                        let totalWeight = 0;
+                        let weightedFlow = 0;
+
+                        for (const n of neighbors) {
+                            const nh = heightData[n.idx];
+                            if (nh < h) {
+                                const weight = (h - nh);
+                                totalWeight += weight;
+                                weightedFlow += flowMap[n.idx] * weight;
+                            }
+                        }
+
+                        if (totalWeight > 0) {
+                            newFlowMap[idx] = weightedFlow / totalWeight;
+                        } else {
+                            newFlowMap[idx] = flow * 0.95;
+                        }
+                    }
+                }
+            }
+        }
+
+        flowMap = newFlowMap;
+    }
+
+    function getFlowDirection(x, y) {
+        const gridWidth = rawWidth;
+        const gridHeight = rawHeight;
+        const idx = y * gridWidth + x;
+        const h = heightData[idx];
+
+        const neighbors = [
+            { dx: -1, dy: 0 },
+            { dx: 1, dy: 0 },
+            { dx: 0, dy: -1 },
+            { dx: 0, dy: 1 },
+            { dx: -1, dy: -1 },
+            { dx: 1, dy: -1 },
+            { dx: -1, dy: 1 },
+            { dx: 1, dy: 1 }
+        ];
+
+        let maxSlope = 0;
+        let direction = null;
+
+        for (const n of neighbors) {
+            const nx = x + n.dx;
+            const ny = y + n.dy;
+            if (nx >= 0 && nx < gridWidth && ny >= 0 && ny < gridHeight) {
+                const nIdx = ny * gridWidth + nx;
+                const nh = heightData[nIdx];
+                const slope = h - nh;
+
+                if (slope > maxSlope) {
+                    maxSlope = slope;
+                    direction = n;
+                }
+            }
+        }
+
+        return direction;
+    }
+
+    function getWorldPosition(gridX, gridY, height) {
+        const meshWidth = terrainDimensions.width;
+        const meshHeight = terrainDimensions.height;
+        
+        const x = (gridX / rawWidth) * meshWidth - meshWidth / 2;
+        const z = (gridY / rawHeight) * meshHeight - meshHeight / 2;
+        
+        return new THREE.Vector3(x, height + 0.5, z);
+    }
+
+    function createFlowLine(start, end, flow) {
+        const midY = (start.y + end.y) / 2;
+        
+        const path = new THREE.LineCurve3(
+            new THREE.Vector3(start.x, midY, start.z),
+            new THREE.Vector3(end.x, midY, end.z)
+        );
+        
+        const radius = Math.min(0.3, flow * 0.02);
+        const geometry = new THREE.TubeGeometry(path, 4, radius, 6, false);
+        
+        let color = 0x0ea5e9;
+        if (flow > 20) {
+            color = 0x3b82f6;
+        }
+        if (flow > 40) {
+            color = 0x8b5cf6;
+        }
+        
+        const material = new THREE.MeshBasicMaterial({ 
+            color: color,
+            depthTest: false,
+            depthWrite: false,
+            transparent: true,
+            opacity: 0.8
+        });
+        
+        const line = new THREE.Mesh(geometry, material);
+        line.renderOrder = 3;
+        
+        return line;
     }
 </script>
 </body>
