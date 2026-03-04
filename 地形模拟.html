@@ -254,16 +254,17 @@
         <!-- 1. 批量导入 -->
         <div class="section-title">批量导入</div>
         <div class="space-y-2">
-            <div class="grid grid-cols-3 gap-2">
+            <div class="grid grid-cols-2 gap-2">
                 <label class="btn-action cursor-pointer" title="导入ZIP文件，自动识别dem.png、dem.txt、sat.png">
                     📦 导入ZIP <input type="file" id="zip-input" accept=".zip" class="hidden">
                 </label>
                 <label class="btn-action cursor-pointer" title="选择文件夹，自动识别dem.png、dem.txt、sat.png">
-                    📁 导入目录 <input type="file" id="folder-input" webkitdirectory directory multiple class="hidden">
+                    📁 导入文件夹 <input type="file" id="folder-input" webkitdirectory directory multiple class="hidden">
                 </label>
-                <label class="btn-action cursor-pointer" title="导入带GPS信息的照片，自动标记在地图上">
+                <label id="photo-input-label" class="btn-action cursor-pointer hidden" title="导入带GPS信息的照片，自动标记在地图上">
                     📷 导入照片 <input type="file" id="photo-input" accept="image/*" multiple class="hidden">
                 </label>
+                <button id="clear-photos" class="btn-action btn-danger hidden" title="清空所有照片标记">🗑️ 清空照片</button>
             </div>
             <div id="import-status" class="text-[10px] text-zinc-500 hidden"></div>
             <div id="dem-info-display" class="text-[10px] text-zinc-400 hidden mt-2 p-2 bg-zinc-800 rounded"></div>
@@ -1148,6 +1149,8 @@
         document.getElementById('dem-txt-input').addEventListener('change', handleDemTxtImport);
         // 照片导入
         document.getElementById('photo-input').addEventListener('change', handlePhotoImport);
+        // 清空照片
+        document.getElementById('clear-photos').addEventListener('click', clearPhotoMarkers);
         // 导出功能
         document.getElementById('export-contours').addEventListener('click', exportContours);
         document.getElementById('export-hypsometric').addEventListener('click', exportHypsometric);
@@ -1703,6 +1706,9 @@
             
             console.log(`真实尺寸: ${realWidthMeters.toFixed(0)}m x ${realHeightMeters.toFixed(0)}m`);
             console.log(`显示尺寸: ${terrainWidth.toFixed(1)} x ${terrainHeight.toFixed(1)}`);
+
+            // 有地理信息，显示导入照片按钮
+            document.getElementById('photo-input-label').classList.remove('hidden');
         } else {
             // 无经纬度信息，使用原始比例
             const aspectRatio = rawWidth / rawHeight;
@@ -1832,6 +1838,12 @@
         window.demInfo = null;
         window.terrainRealSize = null;
         window.rawElevationRange = null;
+
+        // 随机生成地形时自动清空所有照片
+        clearPhotoMarkers();
+
+        // 隐藏导入照片按钮
+        document.getElementById('photo-input-label').classList.add('hidden');
         
         // 清除DEM信息显示
         const displayEl = document.getElementById('dem-info-display');
@@ -2566,6 +2578,9 @@
         return result;
     }
 
+    // 存储所有照片标记
+    let photoMarkers = [];
+
     function addPhotoMarker(latitude, longitude, file) {
         // 将GPS坐标转换为地形坐标
         let terrainX, terrainZ;
@@ -2699,7 +2714,7 @@
                 });
                 const photo = new THREE.Mesh(photoGeometry, photoMaterial);
                 // 照片位于标记顶部中心
-                photo.position.set(0, pinHeight + 2, 0);
+                photo.position.set(0, pinHeight + 1.5, 0);
                 photo.renderOrder = 3;
                 markerGroup.add(photo);
 
@@ -2724,7 +2739,13 @@
                 
                 // 添加到场景
                 scene.add(markerGroup);
-                
+
+                // 存储到照片标记数组
+                photoMarkers.push(markerGroup);
+
+                // 显示清空照片按钮
+                document.getElementById('clear-photos').classList.remove('hidden');
+
                 // 存储照片数据
                 markerGroup.userData = {
                     type: 'photo',
@@ -2732,12 +2753,12 @@
                     latitude: latitude,
                     longitude: longitude
                 };
-                
+
                 // 添加点击事件
                 markerGroup.userData.onClick = () => {
                     showPhotoPreview(file);
                 };
-                
+
                 console.log(`成功添加照片标记: ${file.name}`);
             };
             img.src = e.target.result;
@@ -2768,6 +2789,28 @@
         const scaleMultiplier = isSmooth ? 0.5 : 0.3;
         
         return rawElevation * scaleMultiplier * heightScale;
+    }
+
+    // 清空所有照片标记
+    function clearPhotoMarkers() {
+        photoMarkers.forEach(marker => {
+            scene.remove(marker);
+            // 清理纹理
+            marker.traverse(child => {
+                if (child.material && child.material.map) {
+                    child.material.map.dispose();
+                }
+                if (child.material) {
+                    child.material.dispose();
+                }
+                if (child.geometry) {
+                    child.geometry.dispose();
+                }
+            });
+        });
+        photoMarkers = [];
+        document.getElementById('clear-photos').classList.add('hidden');
+        showImportStatus('已清空所有照片标记');
     }
 
     function showPhotoPreview(file) {
@@ -3028,14 +3071,20 @@
             
             console.log(`真实尺寸: ${realWidthMeters.toFixed(0)}m x ${realHeightMeters.toFixed(0)}m`);
             console.log(`显示尺寸: ${terrainWidth.toFixed(1)} x ${terrainHeight.toFixed(1)}`);
+
+            // 有地理信息，显示导入照片按钮
+            document.getElementById('photo-input-label').classList.remove('hidden');
         } else {
             // 无经纬度信息，使用原始比例
             const aspectRatio = rawWidth / rawHeight;
             terrainWidth = 200 * Math.sqrt(aspectRatio);
             terrainHeight = 200 / Math.sqrt(aspectRatio);
-            
+
             // 清除真实尺寸信息
             window.terrainRealSize = null;
+
+            // 无地理信息，隐藏导入照片按钮
+            document.getElementById('photo-input-label').classList.add('hidden');
         }
         
         geometry = new THREE.PlaneBufferGeometry(terrainWidth, terrainHeight, segs, segs);
