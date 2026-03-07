@@ -1591,7 +1591,23 @@
                                     allPoints.push(latLonToVector3(lat1, lon1, EARTH_RADIUS + 0.05));
                                 }
                             }
-                            allPoints.push(latLonToVector3(ring[ring.length - 1][1], ring[ring.length - 1][0], EARTH_RADIUS + 0.05));
+                            
+                            const lastLat = ring[ring.length - 1][1];
+                            const lastLon = ring[ring.length - 1][0];
+                            const firstLat = ring[0][1];
+                            const firstLon = ring[0][0];
+                            
+                            const closingDistance = calculateDistance(lastLat, lastLon, firstLat, firstLon);
+                            const closingSegments = Math.max(1, Math.min(50, Math.floor(closingDistance / 100)));
+                            
+                            if (closingSegments > 1) {
+                                const closingPoints = calculateGreatCirclePoints(lastLat, lastLon, firstLat, firstLon, closingSegments);
+                                closingPoints.forEach(point => {
+                                    allPoints.push(latLonToVector3(point.lat, point.lon, EARTH_RADIUS + 0.05));
+                                });
+                            } else {
+                                allPoints.push(latLonToVector3(lastLat, lastLon, EARTH_RADIUS + 0.05));
+                            }
                             
                             const lineGeo = new THREE.BufferGeometry().setFromPoints(allPoints);
                             const line = new THREE.Line(lineGeo, material);
