@@ -1,0 +1,2756 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>高级地图预览系统</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Leaflet CSS & JS (2D) -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <!-- Three.js (3D) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <!-- File Parsing Libraries -->
+    <script src="https://unpkg.com/@mapbox/togeojson@0.16.0/togeojson.js"></script>
+    <script src="https://unpkg.com/shpjs@latest/dist/shp.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <style>
+        body, html { margin: 0; padding: 0; height: 100%; overflow: hidden; }
+        #map-container { position: relative; width: 100%; height: 100vh; background: #000; }
+        #leaflet-map, #cesium-container { 
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; 
+        }
+        .hidden { display: none !important; }
+        .control-panel { 
+            position: absolute; top: 20px; left: 20px; z-index: 1000; 
+            background: rgba(255, 255, 255, 0.9); backdrop-filter: blur(8px);
+        }
+        .loading-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.5); z-index: 9999; display: flex;
+            align-items: center; justify-content: center; color: white;
+        }
+        .active-tool {
+            background-color: #3b82f6 !important;
+            color: white !important;
+        }
+
+        /* 搜索框 */
+        .search-box {
+            position: absolute;
+            top: 45px;
+            left: 382px;
+            z-index: 1000;
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 8px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+            padding: 8px;
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            transition: left 0.3s ease;
+        }
+
+        .search-box.collapsed {
+            top: 35px;
+            left: 116px;
+        }
+
+        .search-input {
+            width: 200px;
+            padding: 8px 12px;
+            border: 1px solid #e2e8f0;
+            border-radius: 6px;
+            font-size: 14px;
+            outline: none;
+            transition: all 0.2s;
+        }
+
+        .search-input:focus {
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        }
+
+        .search-btn {
+            padding: 8px 16px;
+            background: #3b82f6;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .search-btn:hover {
+            background: #2563eb;
+        }
+
+        /* 缩放按钮 - 左侧面板边 */
+        .zoom-control-left {
+            position: absolute;
+            top: 40px;
+            left: 340px;
+            z-index: 1000;
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 0 8px 8px 0;
+            box-shadow: 2px 0 10px rgba(0, 0, 0, 0.1);
+            display: flex;
+            flex-direction: column;
+            transition: left 0.3s ease;
+        }
+
+        .zoom-control-left.collapsed {
+            top: 30px;
+            left: 74px;
+        }
+
+        /* 缩放按钮 - 右侧面板边 */
+        .zoom-control-right {
+            position: absolute;
+            top: 40px;
+            right: 220px;
+            z-index: 1000;
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 8px 0 0 8px;
+            box-shadow: -2px 0 10px rgba(0, 0, 0, 0.1);
+            display: flex;
+            flex-direction: column;
+            transition: right 0.3s ease;
+        }
+
+        .zoom-control-right.collapsed {
+            top:30px;
+            right: 72px;
+        }
+
+        .zoom-btn {
+            width: 32px;
+            height: 32px;
+            border: none;
+            background: white;
+            cursor: pointer;
+            font-size: 18px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+        }
+
+        .zoom-btn:hover {
+            background: #f1f5f9;
+        }
+
+        .zoom-control-left .zoom-btn:first-child {
+            border-radius: 0 8px 0 0;
+        }
+
+        .zoom-control-left .zoom-btn:last-child {
+            border-radius: 0 0 8px 0;
+        }
+
+        .zoom-control-right .zoom-btn:first-child {
+            border-radius: 8px 0 0 0;
+        }
+
+        .zoom-control-right .zoom-btn:last-child {
+            border-radius: 0 0 0 8px;
+        }
+
+        /* 定位按钮 */
+        .locate-btn {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            z-index: 1100;
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 8px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+            width: 40px;
+            height: 40px;
+            border: none;
+            cursor: pointer;
+            font-size: 18px;
+            transition: all 0.2s;
+        }
+
+        .locate-btn:hover {
+            transform: scale(1.1);
+            background: #f1f5f9;
+        }
+
+        /* Zoom层级显示 */
+        .zoom-indicator {
+            position: absolute;
+            bottom: 20px;
+            right: 70px;
+            z-index: 1100;
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 8px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+            padding: 10px 16px;
+            font-size: 14px;
+            font-weight: 600;
+            color: #1e293b;
+            font-family: monospace;
+        }
+
+        .zoom-indicator span {
+            color: #3b82f6;
+        }
+
+        .latlon-indicator {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 1100;
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 8px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+            padding: 8px 16px;
+            font-size: 13px;
+            font-weight: 500;
+            color: #1e293b;
+            font-family: monospace;
+            white-space: nowrap;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .latlon-format-toggle {
+            background: #f1f5f9;
+            border: 1px solid #cbd5e1;
+            border-radius: 4px;
+            padding: 2px 8px;
+            font-size: 11px;
+            font-weight: 600;
+            color: #64748b;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .latlon-format-toggle:hover {
+            background: #e2e8f0;
+            color: #3b82f6;
+        }
+
+        /* 可收缩的主面板 */
+        .control-panel {
+            transition: all 0.3s ease;
+            max-height: calc(100vh - 40px);
+            overflow-y: auto;
+        }
+
+        .control-panel::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .control-panel::-webkit-scrollbar-track {
+            background: #f1f5f9;
+            border-radius: 3px;
+        }
+
+        .control-panel::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 3px;
+        }
+
+        .control-panel::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
+        }
+
+        .control-panel.collapsed {
+            width: auto !important;
+            min-width: auto !important;
+            padding: 12px !important;
+        }
+
+        .control-panel.collapsed .panel-content {
+            display: none;
+        }
+
+        .panel-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+
+        .control-panel.collapsed .panel-header {
+            margin-bottom: 0;
+        }
+
+        .control-panel.collapsed .panel-header h1 {
+            display: none;
+        }
+
+        .collapse-panel-btn {
+            width: 28px;
+            height: 56px;
+            border: none;
+            background: #f1f5f9;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .collapse-panel-btn:hover {
+            background: #e2e8f0;
+        }
+
+        /* 图层切换面板 */
+        .layer-panel {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            z-index: 1000;
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+            padding: 16px;
+            min-width: 200px;
+            max-height: calc(100vh - 40px);
+            overflow-y: auto;
+            transition: all 0.3s ease;
+        }
+
+        .layer-panel.collapsed {
+            min-width: auto;
+            padding: 12px;
+        }
+
+        .layer-panel.collapsed .layer-panel-content,
+        .layer-panel.collapsed h3 {
+            display: none;
+        }
+
+        .layer-panel-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+
+        .layer-panel.collapsed .layer-panel-header {
+            margin-bottom: 0;
+        }
+
+        .layer-option {
+            display: flex;
+            align-items: center;
+            padding: 6px 10px;
+            margin-bottom: 4px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+            border: 2px solid transparent;
+        }
+
+        .layer-option:hover {
+            background: #f1f5f9;
+        }
+
+        .layer-option.active {
+            border-color: #3b82f6;
+            background: #eff6ff;
+        }
+
+        .layer-option-icon {
+            width: 28px;
+            height: 28px;
+            border-radius: 5px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            margin-right: 8px;
+            flex-shrink: 0;
+        }
+
+        .grid-toggle-option {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 12px;
+            border-radius: 8px;
+            background: #f8fafc;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .grid-toggle-option:hover {
+            background: #f1f5f9;
+        }
+
+        .toggle-switch {
+            position: relative;
+            width: 44px;
+            height: 24px;
+            flex-shrink: 0;
+        }
+
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #cbd5e1;
+            transition: 0.3s;
+            border-radius: 24px;
+        }
+
+        .toggle-slider:before {
+            position: absolute;
+            content: "";
+            height: 18px;
+            width: 18px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: 0.3s;
+            border-radius: 50%;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+        }
+
+        .toggle-switch input:checked + .toggle-slider {
+            background-color: #3b82f6;
+        }
+
+        .toggle-switch input:checked + .toggle-slider:before {
+            transform: translateX(20px);
+        }
+    </style>
+</head>
+<body class="bg-gray-100">
+
+    <div id="loading" class="loading-overlay hidden">
+        <div class="text-xl font-bold">正在处理数据...</div>
+    </div>
+
+    <div id="map-container">
+        <!-- 2D View -->
+        <div id="leaflet-map"></div>
+        <!-- 3D View -->
+        <div id="cesium-container" class="hidden"></div>
+
+        <!-- 缩放按钮 - 左侧面板边 -->
+        <div class="zoom-control-left" id="zoom-control-left">
+            <button class="zoom-btn" id="zoom-in">+</button>
+            <button class="zoom-btn" id="zoom-out">−</button>
+        </div>
+
+        <!-- 搜索框 -->
+        <div class="search-box" id="search-box">
+            <input type="text" id="search-input" class="search-input" placeholder="搜索地名（如：北京、上海）">
+            <button id="search-btn" class="search-btn">搜索</button>
+        </div>
+
+        <!-- 缩放按钮 - 右侧面板边 -->
+        <div class="zoom-control-right" id="zoom-control-right">
+            <button class="zoom-btn" id="zoom-in-right">+</button>
+            <button class="zoom-btn" id="zoom-out-right">−</button>
+        </div>
+
+        <!-- Zoom层级显示 -->
+        <div class="zoom-indicator">Zoom: <span id="zoom-level">4</span></div>
+
+        <!-- 经纬度显示 -->
+        <div class="latlon-indicator" id="latlon-indicator" style="display: none;">
+            <span id="latlon-value"></span>
+            <button class="latlon-format-toggle" id="latlon-format-toggle" title="切换格式">°'</button>
+        </div>
+
+        <!-- 定位按钮 -->
+        <button class="locate-btn" id="locate-btn" title="定位到当前位置">📍</button>
+
+        <!-- UI Controls -->
+        <div class="control-panel p-6 rounded-xl shadow-2xl border border-gray-200" id="main-panel" style="width: 300px;">
+            <div class="panel-header">
+                <h1 class="text-xl font-extrabold text-gray-800 flex items-center">
+                    <svg class="w-6 h-6 mr-2 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"></path></svg>
+                    地图浏览器
+                </h1>
+                <button class="collapse-panel-btn" id="collapse-main-btn" title="折叠/展开">◀</button>
+            </div>
+
+            <div class="panel-content">
+                <!-- View Toggle -->
+                <div class="mb-6">
+                    <label class="block text-sm font-semibold text-gray-600 mb-2">视图模式</label>
+                    <div class="flex bg-gray-200 p-1 rounded-lg">
+                        <button id="btn-2d" class="flex-1 py-1 px-2 rounded-md bg-white shadow-sm text-sm font-medium text-blue-600 transition-all">2D 地图</button>
+                        <button id="btn-3d" class="flex-1 py-1 px-2 rounded-md text-sm font-medium text-gray-600 hover:text-blue-600 transition-all">3D 地球</button>
+                    </div>
+                </div>
+
+                <!-- Grid Toggle -->
+                <div class="mb-4">
+                    <div class="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                        <div class="flex items-center gap-2">
+                            <span class="text-lg">🌐</span>
+                            <span class="text-sm font-medium text-gray-700">经纬网</span>
+                        </div>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="grid-toggle">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div id="grid-options" class="mt-2 pl-1" style="display: none;">
+                        <div class="flex items-center gap-3 mb-2">
+                            <div class="flex items-center gap-1">
+                                <span class="text-xs text-gray-500">颜色:</span>
+                                <input type="color" id="grid-color" value="#3b82f6" class="w-8 h-6 rounded cursor-pointer border border-gray-300">
+                            </div>
+                            <div class="flex items-center gap-1">
+                                <span class="text-xs text-gray-500">粗细:</span>
+                                <input type="range" id="grid-weight" min="0.5" max="3" step="0.5" value="0.5" class="w-12 h-1 cursor-pointer">
+                                <span id="grid-weight-value" class="text-xs text-gray-600 w-6">0.5</span>
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-2 mb-2">
+                            <span class="text-xs text-gray-500">间距:</span>
+                            <input type="number" id="grid-spacing" value="10" min="1" max="45" class="w-12 h-6 text-xs border border-gray-300 rounded px-1">
+                            <span class="text-xs text-gray-400">度</span>
+                        </div>
+                    </div>
+                    <div class="pt-2 mt-3 pl-1">
+                        <div class="flex items-center gap-2">
+                            <input type="checkbox" id="show-special-lat" class="w-4 h-4">
+                            <span class="text-xs text-gray-600">特殊纬线</span>
+                            <div class="text-xs text-gray-400 mt-1 ml-6">（赤道、回归线、极圈）</div>
+                        </div>
+                        
+                    </div>
+                </div>
+
+                <!-- China Boundary -->
+                <div class="mb-4">
+                    <div class="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                        <div class="flex items-center gap-2">
+                            <span class="text-lg">🇨🇳</span>
+                            <span class="text-sm font-medium text-gray-700">中国行政边界</span>
+                        </div>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="china-boundary-toggle">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                </div>
+
+            <!-- Data Import -->
+            <div class="mb-4">
+                <label class="block text-sm font-semibold text-gray-600 mb-2">导入空间数据</label>
+                <div class="relative group">
+                    <input type="file" id="file-input" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" accept=".kml,.kmz,.geojson,.json,.zip">
+                    <div class="w-full border-2 border-dashed border-blue-400 rounded-lg p-4 text-center group-hover:bg-blue-50 transition-colors">
+                        <svg class="w-8 h-8 mx-auto text-blue-400 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path></svg>
+                        <span class="text-xs text-gray-500">支持 KML, KMZ, GeoJSON, SHP (.zip)</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Layer List -->
+            <div class="mb-4">
+                <label class="block text-sm font-semibold text-gray-600 mb-2">图层管理</label>
+                <div class="flex gap-2 mb-2">
+                    <button onclick="createNewLayer()" 
+                            class="flex-1 bg-blue-500 hover:bg-blue-600 text-white text-xs py-2 px-3 rounded-lg transition-colors">
+                        新建图层
+                    </button>
+                    <button onclick="saveAllLayers()" 
+                            class="flex-1 bg-green-500 hover:bg-green-600 text-white text-xs py-2 px-3 rounded-lg transition-colors">
+                        保存所有图层
+                    </button>
+                </div>
+                
+                <!-- Edit Tools -->
+                <div class="mb-2">
+                    <label class="block text-sm font-semibold text-gray-600 mb-2">编辑工具</label>
+                    <div class="flex gap-2 mb-2">
+                        <button id="tool-pointer" onclick="setEditMode('pointer')" 
+                                class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-700 text-xs py-2 px-2 rounded-lg transition-colors active-tool">
+                            移动
+                        </button>
+                        <button id="tool-point" onclick="setEditMode('point')" 
+                                class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-700 text-xs py-2 px-2 rounded-lg transition-colors">
+                            点
+                        </button>
+                        <button id="tool-line" onclick="setEditMode('line')" 
+                                class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-700 text-xs py-2 px-2 rounded-lg transition-colors">
+                            线
+                        </button>
+                        <button id="tool-polygon" onclick="setEditMode('polygon')" 
+                                class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-700 text-xs py-2 px-2 rounded-lg transition-colors">
+                            面
+                        </button>
+                        <button id="tool-delete" onclick="setEditMode('delete')" 
+                                class="flex-1 bg-red-200 hover:bg-red-300 text-red-700 text-xs py-2 px-2 rounded-lg transition-colors">
+                            删除
+                        </button>
+                    </div>
+                    <div id="edit-status" class="text-xs text-gray-500 italic">当前模式: 选择</div>
+                </div>
+                
+                <div id="layer-list" class="max-h-48 overflow-y-auto space-y-2">
+                    <div class="text-xs text-gray-400 italic text-center py-2">暂无图层</div>
+                </div>
+            </div>
+
+            <div id="status-msg" class="text-xs text-gray-400 italic">就绪</div>
+            </div><!-- end panel-content -->
+        </div><!-- end control-panel -->
+
+        <!-- 图层切换面板 -->
+        <div class="layer-panel" id="layer-panel">
+            <div class="layer-panel-header">
+                <h3 style="margin: 0; font-size: 14px; font-weight: 600; color: #1e293b;">底图切换</h3>
+                <button class="collapse-panel-btn" id="collapse-layer-btn" title="折叠/展开">◀</button>
+            </div>
+            <div class="layer-panel-content">
+                <div class="layer-divider" style="margin-bottom: 8px; font-size: 11px; font-weight: 600; color: #64748b;">ESRI地图</div>
+                <div class="layer-option active" data-layer="satellite">
+                    <div class="layer-option-icon" style="background: linear-gradient(135deg, #1e3a8a, #3b82f6);">🛰️</div>
+                    <div>
+                        <div style="font-size: 13px; font-weight: 500; color: #1e293b;">ESRI卫星影像</div>
+                        <div style="font-size: 11px; color: #64748b;">全球卫星影像</div>
+                    </div>
+                </div>
+                <div class="layer-option" data-layer="streets">
+                    <div class="layer-option-icon" style="background: linear-gradient(135deg, #4f46e5, #6366f1);">🗺️</div>
+                    <div>
+                        <div style="font-size: 13px; font-weight: 500; color: #1e293b;">ESRI地图</div>
+                        <div style="font-size: 11px; color: #64748b;">世界街道地图</div>
+                    </div>
+                </div>
+                <div class="layer-option" data-layer="topo">
+                    <div class="layer-option-icon" style="background: linear-gradient(135deg, #059669, #10b981);">⛰️</div>
+                    <div>
+                        <div style="font-size: 13px; font-weight: 500; color: #1e293b;">ESRI地形</div>
+                        <div style="font-size: 11px; color: #64748b;">地形等高线图</div>
+                    </div>
+                </div>
+                <div class="layer-option" data-layer="natgeo">
+                    <div class="layer-option-icon" style="background: linear-gradient(135deg, #f59e0b, #d97706);">🗺️</div>
+                    <div>
+                        <div style="font-size: 13px; font-weight: 500; color: #1e293b;">国家地理</div>
+                        <div style="font-size: 11px; color: #64748b;">National Geographic</div>
+                    </div>
+                </div>
+                <div class="layer-option" data-layer="relief">
+                    <div class="layer-option-icon" style="background: linear-gradient(135deg, #78716c, #a8a29e);">⛰️</div>
+                    <div>
+                        <div style="font-size: 13px; font-weight: 500; color: #1e293b;">ESRI阴影地形</div>
+                        <div style="font-size: 11px; color: #64748b;">地形阴影图</div>
+                    </div>
+                </div>
+                
+                <div class="layer-divider" style="margin: 8px 0 6px 0; font-size: 11px; font-weight: 600; color: #64748b;">其他地图</div>
+                <div class="layer-option" data-layer="gaode">
+                    <div class="layer-option-icon" style="background: linear-gradient(135deg, #dc2626, #ef4444);">🛰️</div>
+                    <div>
+                        <div style="font-size: 13px; font-weight: 500; color: #1e293b;">高德卫星影像</div>
+                        <div style="font-size: 11px; color: #64748b;">国内卫星影像</div>
+                    </div>
+                </div>
+                <div class="layer-option" data-layer="gaodeStreet">
+                    <div class="layer-option-icon" style="background: linear-gradient(135deg, #2563eb, #3b82f6);">🗺️</div>
+                    <div>
+                        <div style="font-size: 13px; font-weight: 500; color: #1e293b;">高德街道地图</div>
+                        <div style="font-size: 11px; color: #64748b;">国内街道地图</div>
+                    </div>
+                </div>
+                <div class="layer-option" data-layer="bingStreet">
+                    <div class="layer-option-icon" style="background: linear-gradient(135deg, #0ea5e9, #06b6d4);">🗺️</div>
+                    <div>
+                        <div style="font-size: 13px; font-weight: 500; color: #1e293b;">Bing街道地图</div>
+                        <div style="font-size: 11px; color: #64748b;">Bing Maps</div>
+                    </div>
+                </div>
+                <div class="layer-option" data-layer="bingSatellite">
+                    <div class="layer-option-icon" style="background: linear-gradient(135deg, #0d9488, #14b8a6);">🛰️</div>
+                    <div>
+                        <div style="font-size: 13px; font-weight: 500; color: #1e293b;">Bing卫星影像</div>
+                        <div style="font-size: 11px; color: #64748b;">Bing卫星图</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const arcgisUrl = {
+            satellite: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+            streets: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
+            topo: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',
+            natgeo: 'https://server.arcgisonline.com/ArcGIS/rest/services/NatGeo_World_Map/MapServer/tile/{z}/{y}/{x}',
+            relief: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Shaded_Relief/MapServer/tile/{z}/{y}/{x}',
+            gaode: 'https://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}',
+            gaodeStreet: 'https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}',
+            bingStreet: 'https://ecn.t{s}.tiles.virtualearth.net/tiles/r{quadkey}?g=1&mkt=zh-CN',
+            bingSatellite: 'https://ecn.t{s}.tiles.virtualearth.net/tiles/a{quadkey}?g=1&mkt=zh-CN'
+        };
+
+        let currentMode = '2d';
+        let leafletMap;
+        let threeScene, threeCamera, threeRenderer, threeGlobe, threeControls, threePivot;
+        let leafletLayers = {};
+        let threeInitialized = false;
+        let threeCurrentLayerType = 'satellite';
+        let gridVisible = false;
+        let leafletGridLayer = null;
+        let threeGridGroup = null;
+        let leafletSpecialLatLayer = null;
+        let threeSpecialLatGroup = null;
+        let showChinaBoundary = false;
+        let leafletChinaLayer = null;
+        let threeChinaGroup = null;
+        let gridColor = '#3b82f6';
+        let gridWeight = 0.5;
+        let gridSpacing = 10;
+        let showSpecialLat = false;
+        let latlonFormat = 'dms';
+        
+        function decimalToDMS(decimal, isLatitude, is3D = false) {
+            const absolute = Math.abs(decimal);
+            const degrees = Math.floor(absolute);
+            const minutesFloat = (absolute - degrees) * 60;
+            const minutes = Math.floor(minutesFloat);
+            const seconds = Math.floor((minutesFloat - minutes) * 60);
+            
+            let direction;
+            if (isLatitude) {
+                direction = decimal >= 0 ? 'N' : 'S';
+            } else {
+                direction = is3D ? (decimal >= 0 ? 'W' : 'E') : (decimal >= 0 ? 'E' : 'W');
+            }
+            
+            return `${degrees}°${minutes}'${seconds}"${direction}`;
+        }
+        
+        function formatLatLon(lat, lng, is3D = false) {
+            let normalizedLng = lng;
+            
+            while (normalizedLng > 180) {
+                normalizedLng -= 360;
+            }
+            while (normalizedLng < -180) {
+                normalizedLng += 360;
+            }
+            
+            if (latlonFormat === 'decimal') {
+                const latDir = lat >= 0 ? 'N' : 'S';
+                const lngDir = is3D ? (normalizedLng >= 0 ? 'W' : 'E') : (normalizedLng >= 0 ? 'E' : 'W');
+                const absLat = Math.abs(lat).toFixed(4);
+                const absLng = Math.abs(normalizedLng).toFixed(4);
+                return `${absLat}°${latDir} ${absLng}°${lngDir}`;
+            } else {
+                return `${decimalToDMS(lat, true)} ${decimalToDMS(normalizedLng, false, is3D)}`;
+            }
+        }
+        
+        let layers = [];
+        let layerIdCounter = 0;
+        
+        let editMode = 'pointer';
+        let currentEditLayer = null;
+        let drawingLayer = null;
+        let tempPoints = [];
+        let tempLine = null;
+        let tempPolygon = null;
+        let tempVertexMarkers = [];
+        let tempPreview = null;
+
+        function initLeaflet() {
+            if (typeof L === 'undefined') return;
+            leafletMap = L.map('leaflet-map', {
+                zoomControl: false
+            }).setView([35, 105], 4);
+            
+            // ESRI图层
+            leafletLayers.satellite = L.tileLayer(arcgisUrl.satellite, { attribution: 'Esri' }).addTo(leafletMap);
+            leafletLayers.streets = L.tileLayer(arcgisUrl.streets, { attribution: 'Esri' });
+            leafletLayers.topo = L.tileLayer(arcgisUrl.topo, { attribution: 'Esri' });
+            leafletLayers.natgeo = L.tileLayer(arcgisUrl.natgeo, { attribution: 'National Geographic' });
+            leafletLayers.relief = L.tileLayer(arcgisUrl.relief, { attribution: 'Esri' });
+            
+            // 其他图层
+            leafletLayers.gaode = L.tileLayer(arcgisUrl.gaode, { 
+                attribution: '高德卫星影像',
+                subdomains: ['1', '2', '3', '4']
+            });
+            leafletLayers.gaodeStreet = L.tileLayer(arcgisUrl.gaodeStreet, { 
+                attribution: '高德地图',
+                subdomains: ['1', '2', '3', '4']
+            });
+            
+            // Bing地图 - 使用Bing瓦片系统
+            L.BingLayer = L.TileLayer.extend({
+                getTileUrl: function(tilePoint) {
+                    const z = tilePoint.z;
+                    const x = tilePoint.x;
+                    const y = tilePoint.y;
+                    let quadKey = '';
+                    for (let i = z; i > 0; i--) {
+                        let digit = 0;
+                        const mask = 1 << (i - 1);
+                        if ((x & mask) !== 0) digit += 1;
+                        if ((y & mask) !== 0) digit += 2;
+                        quadKey += digit;
+                    }
+                    return this._url.replace('{quadkey}', quadKey).replace('{s}', (tilePoint.x + tilePoint.y) % 4);
+                }
+            });
+            
+            leafletLayers.bingStreet = new L.BingLayer(arcgisUrl.bingStreet, { 
+                attribution: '© Bing Maps',
+                maxZoom: 19,
+                minZoom: 1
+            });
+            leafletLayers.bingSatellite = new L.BingLayer(arcgisUrl.bingSatellite, { 
+                attribution: '© Bing Maps',
+                maxZoom: 19,
+                minZoom: 1
+            });
+            
+            L.control.scale({ imperial: false, metric: true, position: 'bottomleft' }).addTo(leafletMap);
+            
+            leafletMap.on('click', onMapClick);
+            leafletMap.on('dblclick', (e) => {
+                if (editMode === 'line') {
+                    finishLine();
+                } else if (editMode === 'polygon') {
+                    finishPolygon();
+                }
+            });
+            leafletMap.on('mousemove', onMapMouseMove);
+            leafletMap.on('mouseleave', () => {
+                const latlonIndicator = document.getElementById('latlon-indicator');
+                if (latlonIndicator) {
+                    latlonIndicator.style.display = 'none';
+                }
+            });
+        }
+
+        const EARTH_RADIUS = 5;
+        let textureCache = {};
+        
+        function preloadTextures() {
+            const texLoader = new THREE.TextureLoader();
+            const textures = {
+                satellite: 'https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg',
+                streets: 'https://unpkg.com/three-globe/example/img/earth-dark.jpg',
+                topo: 'https://unpkg.com/three-globe/example/img/earth-topology.png'
+            };
+            
+            Object.keys(textures).forEach(key => {
+                texLoader.load(textures[key], (tex) => {
+                    textureCache[key] = tex;
+                });
+            });
+        }
+
+        function initThreeJS() {
+            if (threeInitialized) return;
+            
+            if (typeof THREE === 'undefined') {
+                setTimeout(initThreeJS, 500);
+                return;
+            }
+
+            try {
+                const cMapEl = document.getElementById('cesium-container');
+                cMapEl.classList.remove('hidden');
+
+                threeScene = new THREE.Scene();
+                
+                threeCamera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+                threeCamera.position.set(16, 10, 16);
+                
+                threeRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+                threeRenderer.setSize(window.innerWidth, window.innerHeight);
+                threeRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+                cMapEl.appendChild(threeRenderer.domElement);
+
+                threeControls = new THREE.OrbitControls(threeCamera, threeRenderer.domElement);
+                threeControls.enableDamping = true;
+                threeControls.dampingFactor = 0.05;
+                threeControls.minDistance = 6;
+                threeControls.maxDistance = 30;
+                threeControls.enablePan = false;
+
+                threeScene.add(new THREE.AmbientLight(0xffffff, 0.6));
+                const sun = new THREE.DirectionalLight(0xffffff, 1.2);
+                sun.position.set(20, 10, 20);
+                threeScene.add(sun);
+                const backLight = new THREE.DirectionalLight(0xffffff, 0.3);
+                backLight.position.set(-20, -10, -20);
+                threeScene.add(backLight);
+
+                threePivot = new THREE.Group();
+                threeScene.add(threePivot);
+
+                const textureUrl = 'https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg';
+                
+                const globeMat = new THREE.MeshPhongMaterial({ color: 0xcccccc, shininess: 15 });
+
+                if (textureCache.satellite) {
+                    globeMat.map = textureCache.satellite;
+                    globeMat.color.setHex(0xffffff);
+                } else {
+                    const texLoader = new THREE.TextureLoader();
+                    texLoader.load(textureUrl, (tex) => {
+                        textureCache.satellite = tex;
+                        globeMat.map = tex;
+                        globeMat.color.setHex(0xffffff);
+                        globeMat.needsUpdate = true;
+                    }, undefined, () => {
+                        globeMat.color.setHex(0x1a3a6c);
+                    });
+                }
+
+                const globeGeo = new THREE.SphereGeometry(EARTH_RADIUS, 48, 48);
+                threeGlobe = new THREE.Mesh(globeGeo, globeMat);
+                threeGlobe.rotation.y = -Math.PI / 2;
+                threePivot.add(threeGlobe);
+
+                const raycaster = new THREE.Raycaster();
+                const mouse = new THREE.Vector2();
+
+                threeRenderer.domElement.addEventListener('mousemove', (event) => {
+                    if (currentMode !== '3d') return;
+                    
+                    mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+                    mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+                    
+                    raycaster.setFromCamera(mouse, threeCamera);
+                    const intersects = raycaster.intersectObject(threeGlobe);
+                    
+                    const latlonIndicator = document.getElementById('latlon-indicator');
+                    const latlonValue = document.getElementById('latlon-value');
+                    
+                    if (intersects.length > 0 && latlonIndicator && latlonValue) {
+                        const point = intersects[0].point;
+                        const lat = 90 - Math.acos(point.y / EARTH_RADIUS) * (180 / Math.PI);
+                        let lon = Math.atan2(point.x, -point.z) * (180 / Math.PI) + 180;
+                        while (lon > 180) lon -= 360;
+                        while (lon < -180) lon += 360;
+                        latlonValue.textContent = formatLatLon(lat, lon, true);
+                        latlonIndicator.style.display = 'block';
+                    } else if (latlonIndicator) {
+                        latlonIndicator.style.display = 'none';
+                    }
+                });
+
+                threeRenderer.domElement.addEventListener('mouseleave', () => {
+                    const latlonIndicator = document.getElementById('latlon-indicator');
+                    if (latlonIndicator) {
+                        latlonIndicator.style.display = 'none';
+                    }
+                });
+
+                threeInitialized = true;
+                cMapEl.classList.add('hidden');
+
+                animateThreeJS();
+
+                console.log("Three.js 初始化成功");
+            } catch (e) {
+                console.error("Three.js 初始化失败:", e);
+            }
+        }
+
+        function animateThreeJS() {
+            requestAnimationFrame(animateThreeJS);
+            threeControls.update();
+            threeRenderer.render(threeScene, threeCamera);
+        }
+
+        function updateThreeBaseLayer(type) {
+            if (!threeGlobe) return;
+            
+            threeCurrentLayerType = type;
+            
+            if (textureCache[type]) {
+                threeGlobe.material.map = textureCache[type];
+                threeGlobe.material.needsUpdate = true;
+                return;
+            }
+            
+            const texLoader = new THREE.TextureLoader();
+            
+            let textureUrl;
+            switch(type) {
+                case 'satellite':
+                    textureUrl = 'https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg';
+                    break;
+                case 'streets':
+                    textureUrl = 'https://unpkg.com/three-globe/example/img/earth-dark.jpg';
+                    break;
+                case 'topo':
+                    textureUrl = 'https://unpkg.com/three-globe/example/img/earth-topology.png';
+                    break;
+                default:
+                    textureUrl = 'https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg';
+            }
+
+            texLoader.load(textureUrl, (tex) => {
+                textureCache[type] = tex;
+                threeGlobe.material.map = tex;
+                threeGlobe.material.needsUpdate = true;
+            });
+        }
+
+        function createLeafletGrid() {
+            if (leafletGridLayer) {
+                leafletMap.removeLayer(leafletGridLayer);
+            }
+            
+            const gridLines = [];
+            const spacing = gridSpacing;
+            
+            for (let lat = -80; lat <= 80; lat += spacing) {
+                const coords = [];
+                for (let lon = -180; lon <= 180; lon += 5) {
+                    coords.push([lat, lon]);
+                }
+                gridLines.push(L.polyline(coords, { 
+                    color: gridColor, 
+                    weight: gridWeight, 
+                    opacity: 0.5,
+                    dashArray: '2, 4'
+                }));
+            }
+            for (let lon = -180; lon <= 180; lon += spacing) {
+                const coords = [];
+                for (let lat = -90; lat <= 90; lat += 5) {
+                    coords.push([lat, lon]);
+                }
+                gridLines.push(L.polyline(coords, { 
+                    color: gridColor, 
+                    weight: gridWeight, 
+                    opacity: 0.5,
+                    dashArray: '2, 4'
+                }));
+            }
+            
+            leafletGridLayer = L.layerGroup(gridLines);
+            if (gridVisible) {
+                leafletGridLayer.addTo(leafletMap);
+            }
+        }
+
+        function createLeafletSpecialLat() {
+            if (leafletSpecialLatLayer) {
+                leafletMap.removeLayer(leafletSpecialLatLayer);
+            }
+            
+            const specialLines = [];
+            const specialColor = '#ef4444';
+            const specialWeight = gridWeight + 1;
+            
+            const specialLats = [
+                { lat: 0, dashArray: null },
+                { lat: 23.5, dashArray: '5, 5' },
+                { lat: -23.5, dashArray: '5, 5' },
+                { lat: 66.5, dashArray: '5, 5' },
+                { lat: -66.5, dashArray: '5, 5' }
+            ];
+            specialLats.forEach(item => {
+                const coords = [];
+                for (let lon = -180; lon <= 180; lon += 2) {
+                    coords.push([item.lat, lon]);
+                }
+                const lineOptions = { color: specialColor, weight: specialWeight, opacity: 0.8 };
+                if (item.dashArray) {
+                    lineOptions.dashArray = item.dashArray;
+                }
+                specialLines.push(L.polyline(coords, lineOptions));
+            });
+            
+            leafletSpecialLatLayer = L.layerGroup(specialLines);
+            if (showSpecialLat) {
+                leafletSpecialLatLayer.addTo(leafletMap);
+            }
+        }
+
+        function createThreeGrid() {
+            if (threeGridGroup) {
+                threePivot.remove(threeGridGroup);
+            }
+            
+            threeGridGroup = new THREE.Group();
+            const colorHex = parseInt(gridColor.replace('#', ''), 16);
+            const gridMaterial = new THREE.LineBasicMaterial({ 
+                color: colorHex, 
+                transparent: true, 
+                opacity: 0.4 
+            });
+            
+            const radius = EARTH_RADIUS + 0.005;
+            const spacing = gridSpacing;
+            
+            for (let lat = -80; lat <= 80; lat += spacing) {
+                const points = [];
+                const phi1 = (90 - lat) * (Math.PI / 180);
+                for (let lon = -180; lon <= 180; lon += 2) {
+                    const phi = phi1;
+                    const theta = (lon + 90) * (Math.PI / 180);
+                    const x = -(radius * Math.sin(phi) * Math.cos(theta));
+                    const z = (radius * Math.sin(phi) * Math.sin(theta));
+                    const y = (radius * Math.cos(phi));
+                    points.push(new THREE.Vector3(x, y, z));
+                }
+                const geometry = new THREE.BufferGeometry().setFromPoints(points);
+                const line = new THREE.Line(geometry, gridMaterial);
+                threeGridGroup.add(line);
+            }
+            
+            for (let lon = -180; lon < 180; lon += spacing) {
+                const points = [];
+                const theta = (lon + 90) * (Math.PI / 180);
+                for (let lat = -90; lat <= 90; lat += 2) {
+                    const phi = (90 - lat) * (Math.PI / 180);
+                    const x = -(radius * Math.sin(phi) * Math.cos(theta));
+                    const z = (radius * Math.sin(phi) * Math.sin(theta));
+                    const y = (radius * Math.cos(phi));
+                    points.push(new THREE.Vector3(x, y, z));
+                }
+                const geometry = new THREE.BufferGeometry().setFromPoints(points);
+                const line = new THREE.Line(geometry, gridMaterial);
+                threeGridGroup.add(line);
+            }
+            
+            if (gridVisible) {
+                threePivot.add(threeGridGroup);
+            }
+        }
+
+        function createThreeSpecialLat() {
+            if (threeSpecialLatGroup) {
+                threePivot.remove(threeSpecialLatGroup);
+            }
+            
+            threeSpecialLatGroup = new THREE.Group();
+            const specialColorHex = 0xef4444;
+            const specialMaterial = new THREE.LineBasicMaterial({ 
+                color: specialColorHex, 
+                transparent: true, 
+                opacity: 0.8 
+            });
+            const dashedMaterial = new THREE.LineDashedMaterial({
+                color: specialColorHex,
+                dashSize: 0.1,
+                gapSize: 0.1,
+                transparent: true,
+                opacity: 0.8
+            });
+            
+            const radius = EARTH_RADIUS + 0.005;
+            
+            const addSpecialLine = (lat, isDashed) => {
+                const points = [];
+                const phi1 = (90 - lat) * (Math.PI / 180);
+                for (let lon = -180; lon <= 180; lon += 2) {
+                    const phi = phi1;
+                    const theta = (lon + 90) * (Math.PI / 180);
+                    const x = -(radius * Math.sin(phi) * Math.cos(theta));
+                    const z = (radius * Math.sin(phi) * Math.sin(theta));
+                    const y = (radius * Math.cos(phi));
+                    points.push(new THREE.Vector3(x, y, z));
+                }
+                const geometry = new THREE.BufferGeometry().setFromPoints(points);
+                const line = new THREE.Line(geometry, isDashed ? dashedMaterial : specialMaterial);
+                if (isDashed) {
+                    line.computeLineDistances();
+                }
+                threeSpecialLatGroup.add(line);
+            };
+            
+            addSpecialLine(0, false);
+            addSpecialLine(23.5, true);
+            addSpecialLine(-23.5, true);
+            addSpecialLine(66.5, true);
+            addSpecialLine(-66.5, true);
+            
+            if (showSpecialLat) {
+                threePivot.add(threeSpecialLatGroup);
+            }
+        }
+
+        function toggleGrid(show) {
+            gridVisible = show;
+            
+            const gridOptions = document.getElementById('grid-options');
+            if (gridOptions) {
+                gridOptions.style.display = show ? 'flex' : 'none';
+            }
+            
+            if (currentMode === '2d') {
+                if (show && leafletMap && !leafletGridLayer) {
+                    createLeafletGrid();
+                }
+                if (leafletGridLayer) {
+                    if (show) {
+                        leafletGridLayer.addTo(leafletMap);
+                    } else {
+                        leafletMap.removeLayer(leafletGridLayer);
+                    }
+                }
+            } else {
+                if (show && threePivot && !threeGridGroup) {
+                    createThreeGrid();
+                }
+                if (threeGridGroup) {
+                    if (show) {
+                        threePivot.add(threeGridGroup);
+                    } else {
+                        threePivot.remove(threeGridGroup);
+                    }
+                }
+            }
+        }
+
+        function toggleSpecialLat(show) {
+            showSpecialLat = show;
+            
+            if (currentMode === '2d') {
+                if (show && leafletMap && !leafletSpecialLatLayer) {
+                    createLeafletSpecialLat();
+                }
+                if (leafletSpecialLatLayer) {
+                    if (show) {
+                        leafletSpecialLatLayer.addTo(leafletMap);
+                    } else {
+                        leafletMap.removeLayer(leafletSpecialLatLayer);
+                    }
+                }
+            } else {
+                if (show && threePivot && !threeSpecialLatGroup) {
+                    createThreeSpecialLat();
+                }
+                if (threeSpecialLatGroup) {
+                    if (show) {
+                        threePivot.add(threeSpecialLatGroup);
+                    } else {
+                        threePivot.remove(threeSpecialLatGroup);
+                    }
+                }
+            }
+        }
+
+        function loadChinaBoundary() {
+            if (currentMode === '2d') {
+                loadLeafletChinaBoundary();
+            } else {
+                loadThreeChinaBoundary();
+            }
+        }
+
+        function loadLeafletChinaBoundary() {
+            if (leafletChinaLayer) {
+                leafletMap.removeLayer(leafletChinaLayer);
+                leafletChinaLayer = null;
+            }
+            
+            if (!showChinaBoundary) return;
+            
+            fetch('中华人民共和国.geojson')
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('文件不存在');
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    leafletChinaLayer = L.geoJSON(data, {
+                        style: {
+                            color: '#ef4444',
+                            weight: 2,
+                            opacity: 0.8,
+                            fillOpacity: 0.1
+                        }
+                    });
+                    leafletChinaLayer.addTo(leafletMap);
+                })
+                .catch(error => {
+                    console.error('加载中国行政边界失败:', error);
+                    alert('无法加载中国行政边界文件: 中华人民共和国.geojson');
+                });
+        }
+
+        function loadThreeChinaBoundary() {
+            if (threeChinaGroup) {
+                threePivot.remove(threeChinaGroup);
+                threeChinaGroup = null;
+            }
+            
+            if (!showChinaBoundary) return;
+            
+            fetch('中华人民共和国.geojson')
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('文件不存在');
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    threeChinaGroup = new THREE.Group();
+                    const material = new THREE.LineBasicMaterial({
+                        color: 0xef4444,
+                        transparent: true,
+                        opacity: 0.8
+                    });
+                    
+                    data.features.forEach(feature => {
+                        if (feature.geometry.type === 'Polygon') {
+                            addThreePolygonToChina(feature.geometry.coordinates, material, threeChinaGroup);
+                        } else if (feature.geometry.type === 'MultiPolygon') {
+                            feature.geometry.coordinates.forEach(polygon => {
+                                addThreePolygonToChina(polygon, material, threeChinaGroup);
+                            });
+                        }
+                    });
+                    
+                    threePivot.add(threeChinaGroup);
+                })
+                .catch(error => {
+                    console.error('加载中国行政边界失败:', error);
+                    alert('无法加载中国行政边界文件: 中华人民共和国.geojson');
+                });
+        }
+
+        function addThreePolygonToChina(coordinates, material, group) {
+            const radius = EARTH_RADIUS + 0.01;
+            
+            coordinates.forEach(ring => {
+                const points = [];
+                for (let i = 0; i < ring.length - 1; i++) {
+                    const lon = ring[i][0];
+                    const lat = ring[i][1];
+                    const phi = (90 - lat) * (Math.PI / 180);
+                    const theta = (lon + 90) * (Math.PI / 180);
+                    const x = -(radius * Math.sin(phi) * Math.cos(theta));
+                    const z = (radius * Math.sin(phi) * Math.sin(theta));
+                    const y = (radius * Math.cos(phi));
+                    points.push(new THREE.Vector3(x, y, z));
+                }
+                const geometry = new THREE.BufferGeometry().setFromPoints(points);
+                const line = new THREE.Line(geometry, material);
+                group.add(line);
+            });
+        }
+
+        function latLonToVector3(lat, lon, radius) {
+            const phi = (90 - lat) * (Math.PI / 180);
+            const theta = (lon + 90) * (Math.PI / 180);
+            const x = -(radius * Math.sin(phi) * Math.cos(theta));
+            const z = (radius * Math.sin(phi) * Math.sin(theta));
+            const y = (radius * Math.cos(phi));
+            return new THREE.Vector3(x, y, z);
+        }
+
+        function renderGeoJSONToThree(layer) {
+            if (!threeScene || !layer.geojson) return;
+
+            if (layer.threeGroup) {
+                threePivot.remove(layer.threeGroup);
+                layer.threeGroup = null;
+            }
+
+            layer.threeGroup = new THREE.Group();
+
+            const features = layer.geojson.type === 'FeatureCollection' ? layer.geojson.features : [layer.geojson];
+            console.log("渲染图层:", layer.name, "要素数量:", features.length);
+            
+            let featureCount = 0;
+            let totalPoints = 0;
+            let minLat = 90, maxLat = -90, minLon = 180, maxLon = -180;
+            
+            features.forEach(feature => {
+                const geometry = feature.geometry;
+                if (!geometry) {
+                    console.warn("要素缺少 geometry:", feature);
+                    return;
+                }
+
+                const color = layer.color;
+                const material = new THREE.LineBasicMaterial({ color: color, linewidth: 2 });
+
+                if (geometry.type === 'Point') {
+                    const coords = geometry.coordinates;
+                    const pos = latLonToVector3(coords[1], coords[0], EARTH_RADIUS + 0.05);
+                    const dotGeo = new THREE.SphereGeometry(0.08, 16, 16);
+                    const dotMat = new THREE.MeshBasicMaterial({ color: color });
+                    const dot = new THREE.Mesh(dotGeo, dotMat);
+                    dot.position.copy(pos);
+                    layer.threeGroup.add(dot);
+                    featureCount++;
+                    totalPoints++;
+                    minLat = Math.min(minLat, coords[1]);
+                    maxLat = Math.max(maxLat, coords[1]);
+                    minLon = Math.min(minLon, coords[0]);
+                    maxLon = Math.max(maxLon, coords[0]);
+                } else if (geometry.type === 'LineString' || geometry.type === 'MultiLineString') {
+                    const coords = geometry.type === 'LineString' ? geometry.coordinates : geometry.coordinates[0];
+                    const points = coords.map(c => {
+                        minLat = Math.min(minLat, c[1]);
+                        maxLat = Math.max(maxLat, c[1]);
+                        minLon = Math.min(minLon, c[0]);
+                        maxLon = Math.max(maxLon, c[0]);
+                        return latLonToVector3(c[1], c[0], EARTH_RADIUS + 0.05);
+                    });
+                    const lineGeo = new THREE.BufferGeometry().setFromPoints(points);
+                    const line = new THREE.Line(lineGeo, material);
+                    layer.threeGroup.add(line);
+                    
+                    const smallDotMat = new THREE.MeshBasicMaterial({ color: color });
+                    points.forEach(pos => {
+                        const smallDotGeo = new THREE.SphereGeometry(0.02, 8, 8);
+                        const smallDot = new THREE.Mesh(smallDotGeo, smallDotMat);
+                        smallDot.position.copy(pos);
+                        layer.threeGroup.add(smallDot);
+                    });
+                    
+                    featureCount++;
+                    totalPoints += points.length;
+                } else if (geometry.type === 'Polygon' || geometry.type === 'MultiPolygon') {
+                    const polygons = geometry.type === 'Polygon' ? [geometry.coordinates] : geometry.coordinates;
+                    polygons.forEach(polygon => {
+                        polygon.forEach(ring => {
+                            const points = ring.map(c => {
+                                minLat = Math.min(minLat, c[1]);
+                                maxLat = Math.max(maxLat, c[1]);
+                                minLon = Math.min(minLon, c[0]);
+                                maxLon = Math.max(maxLon, c[0]);
+                                return latLonToVector3(c[1], c[0], EARTH_RADIUS + 0.05);
+                            });
+                            const lineGeo = new THREE.BufferGeometry().setFromPoints(points);
+                            const line = new THREE.Line(lineGeo, material);
+                            layer.threeGroup.add(line);
+                            
+                            const smallDotMat = new THREE.MeshBasicMaterial({ color: color });
+                            points.forEach(pos => {
+                                const smallDotGeo = new THREE.SphereGeometry(0.02, 8, 8);
+                                const smallDot = new THREE.Mesh(smallDotGeo, smallDotMat);
+                                smallDot.position.copy(pos);
+                                layer.threeGroup.add(smallDot);
+                            });
+                            
+                            totalPoints += points.length;
+                        });
+                    });
+                    featureCount++;
+                }
+            });
+
+            layer.threeGroup.visible = layer.visible;
+            threePivot.add(layer.threeGroup);
+            console.log("3D 渲染完成:", featureCount, "个要素,", totalPoints, "个点");
+            
+            layer.bounds = { minLat, maxLat, minLon, maxLon };
+            
+            if (featureCount > 0) {
+                const centerLat = (minLat + maxLat) / 2;
+                const centerLon = (minLon + maxLon) / 2;
+                const latSpan = maxLat - minLat;
+                const lonSpan = maxLon - minLon;
+                const maxSpan = Math.max(latSpan, lonSpan, 1);
+                
+                const distance = EARTH_RADIUS * (2 + Math.log10(maxSpan) * 0.5);
+                
+                console.log("数据范围:", minLat.toFixed(2), "-", maxLat.toFixed(2), "纬度,", minLon.toFixed(2), "-", maxLon.toFixed(2), "经度");
+                console.log("中心点:", centerLat.toFixed(2), centerLon.toFixed(2), "距离:", distance.toFixed(2));
+                
+                const targetPos = latLonToVector3(centerLat, centerLon, distance);
+                threeCamera.position.copy(targetPos);
+                threeCamera.lookAt(0, 0, 0);
+                threeControls.update();
+            }
+        }
+
+        function addLayer(name, geojson) {
+            const colors = [0xff0066, 0x00ff66, 0x6666ff, 0xffff00, 0xff6600, 0x00ffff];
+            const color = colors[layers.length % colors.length];
+            
+            const layer = {
+                id: layerIdCounter++,
+                name: name,
+                geojson: geojson,
+                color: color,
+                visible: true,
+                threeGroup: null,
+                leafletLayer: null,
+                bounds: null
+            };
+            
+            layers.push(layer);
+            updateLayerListUI();
+            syncLayerToMap(layer, false);
+            syncLayerTo3D(layer);
+            
+            return layer;
+        }
+
+        function removeLayer(layerId) {
+            const index = layers.findIndex(l => l.id === layerId);
+            if (index === -1) return;
+            
+            const layer = layers[index];
+            
+            if (layer.threeGroup) {
+                threePivot.remove(layer.threeGroup);
+            }
+            
+            if (layer.leafletLayer && leafletMap) {
+                leafletMap.removeLayer(layer.leafletLayer);
+            }
+            
+            layers.splice(index, 1);
+            updateLayerListUI();
+        }
+
+        function toggleLayerVisibility(layerId) {
+            const layer = layers.find(l => l.id === layerId);
+            if (!layer) return;
+            
+            layer.visible = !layer.visible;
+            
+            if (layer.threeGroup) {
+                layer.threeGroup.visible = layer.visible;
+            }
+            
+            if (layer.leafletLayer) {
+                if (layer.visible) {
+                    layer.leafletLayer.addTo(leafletMap);
+                } else {
+                    leafletMap.removeLayer(layer.leafletLayer);
+                }
+            }
+            
+            updateLayerListUI();
+        }
+
+        function syncLayerToMap(layer, fitBounds = false) {
+            if (!leafletMap) return;
+            
+            if (layer.leafletLayer) {
+                leafletMap.removeLayer(layer.leafletLayer);
+            }
+            
+            const geoLayer = L.geoJSON(layer.geojson, {
+                style: { color: "#" + layer.color.toString(16).padStart(6, '0'), weight: 3, opacity: 0.8 }
+            });
+            
+            layer.leafletLayer = geoLayer;
+            
+            if (layer.visible) {
+                geoLayer.addTo(leafletMap);
+            }
+            
+            if (fitBounds && layer.bounds) {
+                leafletMap.fitBounds([
+                    [layer.bounds.minLat, layer.bounds.minLon],
+                    [layer.bounds.maxLat, layer.bounds.maxLon]
+                ]);
+            }
+        }
+
+        function syncLayerTo3D(layer) {
+            if (!threeScene) return;
+            renderGeoJSONToThree(layer);
+        }
+
+        function updateLayerListUI() {
+            const layerListEl = document.getElementById('layer-list');
+            
+            if (layers.length === 0) {
+                layerListEl.innerHTML = '<div class="text-xs text-gray-400 italic text-center py-2">暂无图层</div>';
+                return;
+            }
+            
+            layerListEl.innerHTML = layers.map(layer => `
+                <div class="flex items-center justify-between bg-white rounded-lg p-2 border border-gray-200 ${currentEditLayer && currentEditLayer.id === layer.id ? 'ring-2 ring-blue-500' : ''}">
+                    <div class="flex items-center flex-1">
+                        <input type="checkbox" 
+                               id="layer-check-${layer.id}" 
+                               ${layer.visible ? 'checked' : ''} 
+                               onchange="toggleLayerVisibility(${layer.id})"
+                               class="mr-2 w-4 h-4 text-blue-600 rounded cursor-pointer">
+                        <div class="w-3 h-3 rounded-full mr-2" style="background-color: #${layer.color.toString(16).padStart(6, '0')}"></div>
+                        <span class="text-xs text-gray-700 truncate flex-1 cursor-pointer hover:text-blue-600" 
+                              onclick="selectEditLayer(${layer.id})" 
+                              title="点击选择为编辑图层">${layer.name}</span>
+                    </div>
+                    <div class="flex gap-1 ml-2">
+                        <button onclick="zoomToLayer(${layer.id})" 
+                                class="text-blue-500 hover:text-blue-700 text-xs px-2 py-1 rounded hover:bg-blue-50 transition-colors"
+                                title="缩放至图层">
+                            缩放
+                        </button>
+                        <button onclick="showLayerFeatures(${layer.id})" 
+                                class="text-purple-500 hover:text-purple-700 text-xs px-2 py-1 rounded hover:bg-purple-50 transition-colors"
+                                title="显示要素">
+                            要素
+                        </button>
+                        <button onclick="saveLayer(${layer.id})" 
+                                class="text-green-500 hover:text-green-700 text-xs px-2 py-1 rounded hover:bg-green-50 transition-colors"
+                                title="保存图层">
+                            保存
+                        </button>
+                        <button onclick="removeLayer(${layer.id})" 
+                                class="text-red-500 hover:text-red-700 text-xs px-2 py-1 rounded hover:bg-red-50 transition-colors"
+                                title="删除图层">
+                            删除
+                        </button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function selectEditLayer(layerId) {
+            const layer = layers.find(l => l.id === layerId);
+            if (!layer) return;
+            
+            currentEditLayer = layer;
+            updateLayerListUI();
+            document.getElementById('status-msg').innerText = "已选择编辑图层: " + layer.name;
+        }
+
+        function zoomToLayer(layerId) {
+            const layer = layers.find(l => l.id === layerId);
+            if (!layer || !layer.bounds) return;
+            
+            if (currentMode === '2d' && leafletMap) {
+                leafletMap.fitBounds([
+                    [layer.bounds.minLat, layer.bounds.minLon],
+                    [layer.bounds.maxLat, layer.bounds.maxLon]
+                ]);
+            } else if (currentMode === '3d' && threeScene && layer.bounds) {
+                const centerLat = (layer.bounds.minLat + layer.bounds.maxLat) / 2;
+                const centerLon = (layer.bounds.minLon + layer.bounds.maxLon) / 2;
+                const latSpan = layer.bounds.maxLat - layer.bounds.minLat;
+                const lonSpan = layer.bounds.maxLon - layer.bounds.minLon;
+                const maxSpan = Math.max(latSpan, lonSpan, 1);
+                
+                const distance = EARTH_RADIUS * (2 + Math.log10(maxSpan) * 0.5);
+                const targetPos = latLonToVector3(centerLat, centerLon, distance);
+                threeCamera.position.copy(targetPos);
+                threeCamera.lookAt(0, 0, 0);
+                threeControls.update();
+            }
+            
+            document.getElementById('status-msg').innerText = "已缩放至图层: " + layer.name;
+        }
+
+        function showLayerFeatures(layerId) {
+            const layer = layers.find(l => l.id === layerId);
+            if (!layer || !layer.geojson) return;
+            
+            const features = layer.geojson.type === 'FeatureCollection' ? layer.geojson.features : [layer.geojson];
+            
+            if (features.length === 0) {
+                alert("该图层没有要素");
+                return;
+            }
+            
+            let featureListHTML = `
+                <div style="max-height: 400px; overflow-y: auto;">
+                    <h3 style="margin: 0 0 10px 0; font-size: 16px;">${layer.name} - 要素列表</h3>
+                    <table style="width: 100%; border-collapse: collapse;">
+                        <thead>
+                            <tr style="background: #f0f0f0;">
+                                <th style="padding: 8px; text-align: left; border: 1px solid #ddd;">名称</th>
+                                <th style="padding: 8px; text-align: left; border: 1px solid #ddd;">类型</th>
+                                <th style="padding: 8px; text-align: left; border: 1px solid #ddd;">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+            `;
+            
+            features.forEach((feature, index) => {
+                const name = feature.properties?.name || `要素 ${index + 1}`;
+                const type = feature.geometry?.type || '未知';
+                const geomType = type === 'Point' ? '点' : type === 'LineString' ? '线' : type === 'Polygon' ? '面' : type;
+                
+                featureListHTML += `
+                    <tr>
+                        <td style="padding: 8px; border: 1px solid #ddd;">${name}</td>
+                        <td style="padding: 8px; border: 1px solid #ddd;">${geomType}</td>
+                        <td style="padding: 8px; border: 1px solid #ddd;">
+                            <button onclick="zoomToFeature(${layer.id}, ${index})" 
+                                    style="padding: 4px 8px; background: #3b82f6; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                                定位
+                            </button>
+                        </td>
+                    </tr>
+                `;
+            });
+            
+            featureListHTML += `
+                        </tbody>
+                    </table>
+                </div>
+            `;
+            
+            const modal = document.createElement('div');
+            modal.style.cssText = `
+                position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+                background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 10000;
+            `;
+            modal.innerHTML = `
+                <div style="background: white; padding: 20px; border-radius: 8px; max-width: 600px; width: 90%;">
+                    ${featureListHTML}
+                    <button onclick="this.closest('div[style*=fixed]').remove()" 
+                            style="margin-top: 15px; padding: 8px 16px; background: #6b7280; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                        关闭
+                    </button>
+                </div>
+            `;
+            document.body.appendChild(modal);
+        }
+
+        function zoomToFeature(layerId, featureIndex) {
+            const layer = layers.find(l => l.id === layerId);
+            if (!layer || !layer.geojson) return;
+            
+            const features = layer.geojson.type === 'FeatureCollection' ? layer.geojson.features : [layer.geojson];
+            if (featureIndex >= features.length) return;
+            
+            const feature = features[featureIndex];
+            const geometry = feature.geometry;
+            if (!geometry) return;
+            
+            let minLat = 90, maxLat = -90, minLon = 180, maxLon = -180;
+            
+            if (geometry.type === 'Point') {
+                const coord = geometry.coordinates;
+                minLat = maxLat = coord[1];
+                minLon = maxLon = coord[0];
+            } else if (geometry.type === 'LineString') {
+                geometry.coordinates.forEach(coord => {
+                    minLat = Math.min(minLat, coord[1]);
+                    maxLat = Math.max(maxLat, coord[1]);
+                    minLon = Math.min(minLon, coord[0]);
+                    maxLon = Math.max(maxLon, coord[0]);
+                });
+            } else if (geometry.type === 'Polygon') {
+                geometry.coordinates[0].forEach(coord => {
+                    minLat = Math.min(minLat, coord[1]);
+                    maxLat = Math.max(maxLat, coord[1]);
+                    minLon = Math.min(minLon, coord[0]);
+                    maxLon = Math.max(maxLon, coord[0]);
+                });
+            }
+            
+            if (currentMode === '2d' && leafletMap) {
+                leafletMap.fitBounds([
+                    [minLat, minLon],
+                    [maxLat, maxLon]
+                ], { padding: [50, 50], maxZoom: 18 });
+            } else if (currentMode === '3d' && threeScene) {
+                const centerLat = (minLat + maxLat) / 2;
+                const centerLon = (minLon + maxLon) / 2;
+                const latSpan = maxLat - minLat;
+                const lonSpan = maxLon - minLon;
+                const maxSpan = Math.max(latSpan, lonSpan, 0.1);
+                
+                const distance = EARTH_RADIUS * (1.5 + Math.log10(maxSpan) * 0.5);
+                const targetPos = latLonToVector3(centerLat, centerLon, distance);
+                threeCamera.position.copy(targetPos);
+                threeCamera.lookAt(0, 0, 0);
+                threeControls.update();
+            }
+            
+            const featureName = feature.properties?.name || `要素 ${featureIndex + 1}`;
+            document.getElementById('status-msg').innerText = "已定位到: " + featureName;
+        }
+
+        function createNewLayer() {
+            const layerName = prompt("请输入新图层名称:", "新建图层 " + (layers.length + 1));
+            if (!layerName || layerName.trim() === "") return;
+            
+            const emptyGeoJSON = {
+                type: "FeatureCollection",
+                features: []
+            };
+            
+            addLayer(layerName.trim(), emptyGeoJSON);
+            document.getElementById('status-msg').innerText = "已创建新图层: " + layerName.trim();
+        }
+
+        function renameLayer(layerId) {
+            const layer = layers.find(l => l.id === layerId);
+            if (!layer) return;
+            
+            const newName = prompt("请输入新的图层名称:", layer.name);
+            if (!newName || newName.trim() === "") return;
+            
+            layer.name = newName.trim();
+            updateLayerListUI();
+            document.getElementById('status-msg').innerText = "图层已重命名: " + newName.trim();
+        }
+
+        function saveLayer(layerId) {
+            const layer = layers.find(l => l.id === layerId);
+            if (!layer || !layer.geojson) return;
+            
+            const jsonStr = JSON.stringify(layer.geojson, null, 2);
+            const blob = new Blob([jsonStr], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = layer.name.replace(/\.[^/.]+$/, "") + ".geojson";
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            
+            document.getElementById('status-msg').innerText = "已保存图层: " + layer.name;
+        }
+
+        function saveAllLayers() {
+            if (layers.length === 0) {
+                alert("没有可保存的图层");
+                return;
+            }
+            
+            const allFeatures = [];
+            layers.forEach(layer => {
+                if (layer.geojson && layer.geojson.features) {
+                    layer.geojson.features.forEach(feature => {
+                        allFeatures.push({
+                            ...feature,
+                            properties: {
+                                ...feature.properties,
+                                layerName: layer.name,
+                                layerColor: "#" + layer.color.toString(16).padStart(6, '0')
+                            }
+                        });
+                    });
+                }
+            });
+            
+            const combinedGeoJSON = {
+                type: "FeatureCollection",
+                features: allFeatures
+            };
+            
+            const jsonStr = JSON.stringify(combinedGeoJSON, null, 2);
+            const blob = new Blob([jsonStr], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = "all_layers.geojson";
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            
+            document.getElementById('status-msg').innerText = "已保存所有图层 (" + layers.length + " 个)";
+        }
+
+        function setEditMode(mode) {
+            editMode = mode;
+            
+            const tools = ['pointer', 'point', 'line', 'polygon', 'delete'];
+            tools.forEach(t => {
+                const btn = document.getElementById('tool-' + t);
+                if (btn) {
+                    if (t === mode) {
+                        btn.classList.add('active-tool');
+                    } else {
+                        btn.classList.remove('active-tool');
+                    }
+                }
+            });
+            
+            const statusEl = document.getElementById('edit-status');
+            const modeNames = {
+                'pointer': '选择',
+                'point': '添加点',
+                'line': '绘制线',
+                'polygon': '绘制面',
+                'delete': '删除要素'
+            };
+            statusEl.innerText = "当前模式: " + modeNames[mode];
+            
+            clearTempDrawing();
+            
+            if (leafletMap) {
+                leafletMap.getContainer().style.cursor = mode === 'pointer' ? '' : 'crosshair';
+            }
+        }
+
+        function clearTempDrawing() {
+            if (tempLine) {
+                leafletMap.removeLayer(tempLine);
+                tempLine = null;
+            }
+            if (tempPolygon) {
+                leafletMap.removeLayer(tempPolygon);
+                tempPolygon = null;
+            }
+            if (tempPreview) {
+                leafletMap.removeLayer(tempPreview);
+                tempPreview = null;
+            }
+            tempVertexMarkers.forEach(marker => leafletMap.removeLayer(marker));
+            tempVertexMarkers = [];
+            tempPoints = [];
+        }
+
+        function onMapClick(e) {
+            if (currentMode !== '2d') return;
+            
+            const latlng = e.latlng;
+            
+            if (editMode === 'point') {
+                addPoint(latlng);
+            } else if (editMode === 'line') {
+                addLinePoint(latlng);
+            } else if (editMode === 'polygon') {
+                addPolygonPoint(latlng);
+            } else if (editMode === 'delete') {
+                deleteFeatureAt(latlng);
+            }
+        }
+
+        function onMapMouseMove(e) {
+            if (currentMode !== '2d') return;
+            
+            const latlng = e.latlng;
+            const latlonIndicator = document.getElementById('latlon-indicator');
+            const latlonValue = document.getElementById('latlon-value');
+            
+            if (latlonIndicator && latlonValue) {
+                latlonValue.textContent = formatLatLon(latlng.lat, latlng.lng);
+                latlonIndicator.style.display = 'block';
+            }
+            
+            if (editMode !== 'line' && editMode !== 'polygon') return;
+            if (tempPoints.length === 0) return;
+            
+            const previewPoints = [...tempPoints, [latlng.lng, latlng.lat]];
+            
+            if (tempPreview) {
+                leafletMap.removeLayer(tempPreview);
+            }
+            
+            if (editMode === 'line') {
+                tempPreview = L.polyline(previewPoints, {
+                    color: '#3b82f6',
+                    dashArray: '5, 5',
+                    weight: 2,
+                    opacity: 0.8
+                }).addTo(leafletMap);
+            } else if (editMode === 'polygon') {
+                tempPreview = L.polygon(previewPoints, {
+                    color: '#3b82f6',
+                    fillColor: '#3b82f6',
+                    fillOpacity: 0.1,
+                    dashArray: '5, 5',
+                    weight: 2,
+                    opacity: 0.8
+                }).addTo(leafletMap);
+            }
+        }
+
+        function addPoint(latlng) {
+            if (layers.length === 0) {
+                alert("请先创建或选择一个图层");
+                return;
+            }
+            
+            const layer = currentEditLayer || layers[layers.length - 1];
+            const featureName = prompt("请输入要素名称:", "点 " + (layer.geojson.features.length + 1));
+            if (!featureName || featureName.trim() === "") return;
+            
+            const feature = {
+                type: "Feature",
+                geometry: {
+                    type: "Point",
+                    coordinates: [latlng.lng, latlng.lat]
+                },
+                properties: {
+                    name: featureName.trim()
+                }
+            };
+            
+            layer.geojson.features.push(feature);
+            syncLayerToMap(layer, false);
+            syncLayerTo3D(layer);
+            
+            document.getElementById('status-msg').innerText = "已添加点到图层: " + layer.name;
+        }
+
+        function addLinePoint(latlng) {
+            tempPoints.push([latlng.lng, latlng.lat]);
+            
+            const vertexMarker = L.circleMarker(latlng, {
+                radius: 5,
+                color: '#ef4444',
+                fillColor: '#ef4444',
+                fillOpacity: 1
+            }).addTo(leafletMap);
+            tempVertexMarkers.push(vertexMarker);
+            
+            if (tempPoints.length >= 2) {
+                if (tempLine) {
+                    leafletMap.removeLayer(tempLine);
+                }
+                
+                tempLine = L.polyline(tempPoints, {
+                    color: '#ef4444',
+                    weight: 3
+                }).addTo(leafletMap);
+            }
+        }
+
+        function finishLine() {
+            if (tempPoints.length < 2) {
+                clearTempDrawing();
+                return;
+            }
+            
+            if (layers.length === 0) {
+                alert("请先创建或选择一个图层");
+                clearTempDrawing();
+                return;
+            }
+            
+            const layer = currentEditLayer || layers[layers.length - 1];
+            const featureName = prompt("请输入要素名称:", "线 " + (layer.geojson.features.length + 1));
+            if (!featureName || featureName.trim() === "") {
+                clearTempDrawing();
+                return;
+            }
+            
+            const feature = {
+                type: "Feature",
+                geometry: {
+                    type: "LineString",
+                    coordinates: tempPoints
+                },
+                properties: {
+                    name: featureName.trim()
+                }
+            };
+            
+            layer.geojson.features.push(feature);
+            syncLayerToMap(layer, false);
+            syncLayerTo3D(layer);
+            
+            clearTempDrawing();
+            document.getElementById('status-msg').innerText = "已添加线到图层: " + layer.name;
+        }
+
+        function addPolygonPoint(latlng) {
+            tempPoints.push([latlng.lng, latlng.lat]);
+            
+            const vertexMarker = L.circleMarker(latlng, {
+                radius: 5,
+                color: '#ef4444',
+                fillColor: '#ef4444',
+                fillOpacity: 1
+            }).addTo(leafletMap);
+            tempVertexMarkers.push(vertexMarker);
+            
+            if (tempPoints.length >= 3) {
+                if (tempPolygon) {
+                    leafletMap.removeLayer(tempPolygon);
+                }
+                
+                tempPolygon = L.polygon(tempPoints, {
+                    color: '#ef4444',
+                    fillColor: '#ef4444',
+                    fillOpacity: 0.2,
+                    weight: 3
+                }).addTo(leafletMap);
+            }
+        }
+
+        function finishPolygon() {
+            if (tempPoints.length < 3) {
+                clearTempDrawing();
+                return;
+            }
+            
+            if (layers.length === 0) {
+                alert("请先创建或选择一个图层");
+                clearTempDrawing();
+                return;
+            }
+            
+            const layer = currentEditLayer || layers[layers.length - 1];
+            const featureName = prompt("请输入要素名称:", "面 " + (layer.geojson.features.length + 1));
+            if (!featureName || featureName.trim() === "") {
+                clearTempDrawing();
+                return;
+            }
+            
+            const feature = {
+                type: "Feature",
+                geometry: {
+                    type: "Polygon",
+                    coordinates: [tempPoints]
+                },
+                properties: {
+                    name: featureName.trim()
+                }
+            };
+            
+            layer.geojson.features.push(feature);
+            syncLayerToMap(layer, false);
+            syncLayerTo3D(layer);
+            
+            clearTempDrawing();
+            document.getElementById('status-msg').innerText = "已添加面到图层: " + layer.name;
+        }
+
+        function deleteFeatureAt(latlng) {
+            if (layers.length === 0) return;
+            
+            let deleted = false;
+            layers.forEach(layer => {
+                if (!layer.visible) return;
+                
+                const features = layer.geojson.features || [];
+                for (let i = features.length - 1; i >= 0; i--) {
+                    const feature = features[i];
+                    if (!feature.geometry) continue;
+                    
+                    let shouldDelete = false;
+                    const geom = feature.geometry;
+                    
+                    if (geom.type === 'Point') {
+                        const pos = latLonToVector3(geom.coordinates[1], geom.coordinates[0], EARTH_RADIUS);
+                        const clickPos = latLonToVector3(latlng.lat, latlng.lng, EARTH_RADIUS);
+                        if (pos.distanceTo(clickPos) < 0.3) {
+                            shouldDelete = true;
+                        }
+                    } else if (geom.type === 'LineString') {
+                        for (const coord of geom.coordinates) {
+                            const pos = latLonToVector3(coord[1], coord[0], EARTH_RADIUS);
+                            const clickPos = latLonToVector3(latlng.lat, latlng.lng, EARTH_RADIUS);
+                            if (pos.distanceTo(clickPos) < 0.3) {
+                                shouldDelete = true;
+                                break;
+                            }
+                        }
+                    } else if (geom.type === 'Polygon') {
+                        for (const ring of geom.coordinates) {
+                            for (const coord of ring) {
+                                const pos = latLonToVector3(coord[1], coord[0], EARTH_RADIUS);
+                                const clickPos = latLonToVector3(latlng.lat, latlng.lng, EARTH_RADIUS);
+                                if (pos.distanceTo(clickPos) < 0.3) {
+                                    shouldDelete = true;
+                                    break;
+                                }
+                            }
+                            if (shouldDelete) break;
+                        }
+                    }
+                    
+                    if (shouldDelete) {
+                        features.splice(i, 1);
+                        deleted = true;
+                        syncLayerToMap(layer, false);
+                        syncLayerTo3D(layer);
+                        break;
+                    }
+                }
+            });
+            
+            if (deleted) {
+                document.getElementById('status-msg').innerText = "已删除要素";
+            }
+        }
+
+        function toggleMode(mode) {
+            if (mode === currentMode) return;
+            
+            const latlonIndicator = document.getElementById('latlon-indicator');
+            if (latlonIndicator) {
+                latlonIndicator.style.display = 'none';
+            }
+            
+            if (gridVisible) {
+                if (currentMode === '2d' && leafletGridLayer) {
+                    leafletMap.removeLayer(leafletGridLayer);
+                } else if (currentMode === '3d' && threeGridGroup) {
+                    threePivot.remove(threeGridGroup);
+                }
+            }
+            
+            if (showSpecialLat) {
+                if (currentMode === '2d' && leafletSpecialLatLayer) {
+                    leafletMap.removeLayer(leafletSpecialLatLayer);
+                } else if (currentMode === '3d' && threeSpecialLatGroup) {
+                    threePivot.remove(threeSpecialLatGroup);
+                }
+            }
+            
+            if (showChinaBoundary) {
+                if (currentMode === '2d' && leafletChinaLayer) {
+                    leafletMap.removeLayer(leafletChinaLayer);
+                } else if (currentMode === '3d' && threeChinaGroup) {
+                    threePivot.remove(threeChinaGroup);
+                }
+            }
+            
+            currentMode = mode;
+
+            const btn2d = document.getElementById('btn-2d');
+            const btn3d = document.getElementById('btn-3d');
+            const lMapEl = document.getElementById('leaflet-map');
+            const cMapEl = document.getElementById('cesium-container');
+
+            if (mode === '3d') {
+                btn3d.classList.add('bg-white', 'shadow-sm', 'text-blue-600');
+                btn2d.classList.remove('bg-white', 'shadow-sm', 'text-blue-600');
+                lMapEl.classList.add('hidden');
+                cMapEl.classList.remove('hidden');
+                updateLayerOptionsForMode('3d');
+                
+                if (threeRenderer) {
+                    threeRenderer.setSize(window.innerWidth, window.innerHeight);
+                    threeCamera.aspect = window.innerWidth / window.innerHeight;
+                    threeCamera.updateProjectionMatrix();
+                    syncAllLayersTo3D();
+                }
+                
+                if (gridVisible) {
+                    if (!threeGridGroup) createThreeGrid();
+                    if (threeGridGroup) threePivot.add(threeGridGroup);
+                }
+                
+                if (showSpecialLat) {
+                    if (!threeSpecialLatGroup) createThreeSpecialLat();
+                    if (threeSpecialLatGroup) threePivot.add(threeSpecialLatGroup);
+                }
+                
+                if (showChinaBoundary) {
+                    loadThreeChinaBoundary();
+                }
+            } else {
+                btn2d.classList.add('bg-white', 'shadow-sm', 'text-blue-600');
+                btn3d.classList.remove('bg-white', 'shadow-sm', 'text-blue-600');
+                cMapEl.classList.add('hidden');
+                lMapEl.classList.remove('hidden');
+                updateLayerOptionsForMode('2d');
+                syncAllLayersToMap();
+                
+                if (gridVisible) {
+                    if (!leafletGridLayer) createLeafletGrid();
+                    if (leafletGridLayer) leafletGridLayer.addTo(leafletMap);
+                }
+                
+                if (showSpecialLat) {
+                    if (!leafletSpecialLatLayer) createLeafletSpecialLat();
+                    if (leafletSpecialLatLayer) leafletSpecialLatLayer.addTo(leafletMap);
+                }
+                
+                if (showChinaBoundary) {
+                    loadLeafletChinaBoundary();
+                }
+            }
+        }
+
+        function updateLayerOptionsForMode(mode) {
+            const layerOptions = document.querySelectorAll('.layer-option');
+            const dividers = document.querySelectorAll('.layer-divider');
+            
+            const supported3DLayers = ['satellite', 'streets', 'topo'];
+            
+            layerOptions.forEach(option => {
+                const layerType = option.dataset.layer;
+                if (mode === '3d') {
+                    if (supported3DLayers.includes(layerType)) {
+                        option.style.display = 'flex';
+                    } else {
+                        option.style.display = 'none';
+                    }
+                } else {
+                    option.style.display = 'flex';
+                }
+            });
+            
+            dividers.forEach(divider => {
+                const text = divider.textContent.trim();
+                if (mode === '3d') {
+                    divider.style.display = 'none';
+                } else {
+                    divider.style.display = 'block';
+                }
+            });
+        }
+
+        function syncAllLayersTo3D() {
+            layers.forEach(layer => {
+                if (layer.visible) {
+                    syncLayerTo3D(layer);
+                }
+            });
+        }
+
+        function syncAllLayersToMap() {
+            layers.forEach(layer => {
+                if (layer.visible) {
+                    syncLayerToMap(layer, false);
+                }
+            });
+        }
+
+        async function handleFile(file) {
+            const loading = document.getElementById('loading');
+            const status = document.getElementById('status-msg');
+            loading.classList.remove('hidden');
+            status.innerText = "处理中: " + file.name;
+
+            try {
+                const fileName = file.name.toLowerCase();
+                let geojson;
+
+                console.log("开始处理文件:", fileName);
+
+                if (fileName.endsWith('.geojson') || fileName.endsWith('.json')) {
+                    const text = await file.text();
+                    geojson = JSON.parse(text);
+                    console.log("GeoJSON 解析成功:", geojson.type);
+                } 
+                else if (fileName.endsWith('.kml')) {
+                    const text = await file.text();
+                    const parser = new DOMParser();
+                    const kmlDom = parser.parseFromString(text, "text/xml");
+                    geojson = toGeoJSON.kml(kmlDom);
+                    console.log("KML 转换成功:", geojson.type);
+                }
+                else if (fileName.endsWith('.kmz')) {
+                    const buffer = await file.arrayBuffer();
+                    const zip = await JSZip.loadAsync(buffer);
+                    
+                    let kmlText = null;
+                    for (const [filename, file] of Object.entries(zip.files)) {
+                        if (filename.endsWith('.kml') && !filename.startsWith('__MACOSX')) {
+                            kmlText = await file.async('text');
+                            break;
+                        }
+                    }
+                    
+                    if (kmlText) {
+                        const parser = new DOMParser();
+                        const kmlDom = parser.parseFromString(kmlText, "text/xml");
+                        geojson = toGeoJSON.kml(kmlDom);
+                        console.log("KMZ 解压并转换成功:", geojson.type);
+                    } else {
+                        throw new Error("KMZ 文件中未找到有效的 KML 文件");
+                    }
+                }
+                else if (fileName.endsWith('.zip')) {
+                    const buffer = await file.arrayBuffer();
+                    geojson = await shp(buffer);
+                    console.log("SHP 解压并转换成功:", geojson.type);
+                }
+
+                if (geojson) {
+                    const featureCount = geojson.type === 'FeatureCollection' ? geojson.features.length : 1;
+                    console.log("数据加载成功，要素数量:", featureCount);
+                    
+                    addLayer(file.name, geojson);
+                    status.innerText = "加载成功: " + file.name + " (" + featureCount + " 个要素)";
+                } else {
+                    throw new Error("无法解析文件格式");
+                }
+            } catch (err) {
+                console.error("文件处理错误:", err);
+                status.innerText = "错误: " + err.message;
+            } finally {
+                loading.classList.add('hidden');
+            }
+        }
+
+        // 缩放按钮功能
+        document.getElementById('zoom-in').addEventListener('click', () => {
+            if (leafletMap) leafletMap.zoomIn();
+        });
+
+        document.getElementById('zoom-out').addEventListener('click', () => {
+            if (leafletMap) leafletMap.zoomOut();
+        });
+
+        // 右侧缩放按钮功能
+        document.getElementById('zoom-in-right').addEventListener('click', () => {
+            if (leafletMap) leafletMap.zoomIn();
+        });
+
+        document.getElementById('zoom-out-right').addEventListener('click', () => {
+            if (leafletMap) leafletMap.zoomOut();
+        });
+
+        // 更新缩放等级显示
+        function updateZoomLevel() {
+            if (leafletMap) {
+                document.getElementById('zoom-level').textContent = leafletMap.getZoom();
+            }
+        }
+
+        // 地名搜索功能
+        let searchMarker = null;
+        const searchInput = document.getElementById('search-input');
+        const searchBtn = document.getElementById('search-btn');
+
+        // 百度地图API Key
+        const BAIDU_AK = '2P3BS8kb9vg0yGvXpECPNoYiC7bii7O1';
+
+        // 百度坐标转WGS84坐标
+        function bd09ToWgs84(bd_lon, bd_lat) {
+            const x = bd_lon - 0.0065;
+            const y = bd_lat - 0.006;
+            const z = Math.sqrt(x * x + y * y) - 0.00002 * Math.sin(y * Math.PI * 3000.0 / 180.0);
+            const theta = Math.atan2(y, x) - 0.000003 * Math.cos(x * Math.PI * 3000.0 / 180.0);
+            const gg_lon = z * Math.cos(theta);
+            const gg_lat = z * Math.sin(theta);
+
+            // GCJ02 to WGS84
+            const a = 6378245.0;
+            const ee = 0.00669342162296594323;
+
+            function outOfChina(lng, lat) {
+                return lng < 72.004 || lng > 137.8347 || lat < 0.8293 || lat > 55.8271;
+            }
+
+            function transformLat(x, y) {
+                let ret = -100.0 + 2.0 * x + 3.0 * y + 0.2 * y * y + 0.1 * x * x + 0.2 * x * y;
+                ret += (20.0 * Math.sin(6.0 * x * Math.PI) + 20.0 * Math.sin(2.0 * x * Math.PI)) * 2.0 / 3.0;
+                ret += (20.0 * Math.sin(y * Math.PI) + 40.0 * Math.sin(y / 3.0 * Math.PI)) * 2.0 / 3.0;
+                ret += (160.0 * Math.sin(y / 12.0 * Math.PI) + 320 * Math.sin(y * Math.PI / 30.0)) * 2.0 / 3.0;
+                return ret;
+            }
+
+            function transformLng(x, y) {
+                let ret = 300.0 + x + 2.0 * y + 0.1 * x * x + 0.1 * x * y + 0.1 * Math.sqrt(Math.abs(x));
+                ret += (20.0 * Math.sin(6.0 * x * Math.PI) + 20.0 * Math.sin(2.0 * x * Math.PI)) * 2.0 / 3.0;
+                ret += (20.0 * Math.sin(x * Math.PI) + 40.0 * Math.sin(x / 3.0 * Math.PI)) * 2.0 / 3.0;
+                ret += (150.0 * Math.sin(x / 12.0 * Math.PI) + 300.0 * Math.sin(x / 30.0 * Math.PI)) * 2.0 / 3.0;
+                return ret;
+            }
+
+            if (outOfChina(gg_lon, gg_lat)) {
+                return { lon: gg_lon, lat: gg_lat };
+            }
+
+            let dLat = transformLat(gg_lon - 105.0, gg_lat - 35.0);
+            let dLon = transformLng(gg_lon - 105.0, gg_lat - 35.0);
+            const radLat = gg_lat / 180.0 * Math.PI;
+            let magic = Math.sin(radLat);
+            magic = 1 - ee * magic * magic;
+            const sqrtMagic = Math.sqrt(magic);
+            dLat = (dLat * 180.0) / ((a * (1 - ee)) / (magic * sqrtMagic) * Math.PI);
+            dLon = (dLon * 180.0) / (a / sqrtMagic * Math.cos(radLat) * Math.PI);
+            const wgs_lat = gg_lat - dLat;
+            const wgs_lon = gg_lon - dLon;
+
+            return { lon: wgs_lon, lat: wgs_lat };
+        }
+
+        // 使用百度地图API进行地名搜索
+        function searchLocation() {
+            const query = searchInput.value.trim();
+            if (!query) {
+                alert('请输入要搜索的地名');
+                return;
+            }
+
+            searchBtn.textContent = '搜索中...';
+            searchBtn.disabled = true;
+
+            // 使用JSONP方式调用百度地图API
+            const callbackName = 'baiduSearchCallback_' + Date.now();
+
+            window[callbackName] = function(data) {
+                console.log('百度搜索结果:', data);
+
+                if (data.status === 0 && data.results && data.results.length > 0) {
+                    const result = data.results[0];
+                    const bd_lat = result.location.lat;
+                    const bd_lon = result.location.lng;
+                    const name = result.name;
+                    const address = result.address || '';
+
+                    // 转换为WGS84坐标
+                    const wgs = bd09ToWgs84(bd_lon, bd_lat);
+
+                    console.log('百度坐标:', bd_lon, bd_lat);
+                    console.log('WGS84坐标:', wgs.lon, wgs.lat);
+
+                    // 移除之前的标记
+                    if (searchMarker) {
+                        leafletMap.removeLayer(searchMarker);
+                    }
+
+                    // 添加新标记
+                    searchMarker = L.marker([wgs.lat, wgs.lon]).addTo(leafletMap)
+                        .bindPopup(`<b>${name}</b><br>${address}`)
+                        .openPopup();
+
+                    // 移动到该位置
+                    leafletMap.setView([wgs.lat, wgs.lon], 12);
+                } else {
+                    alert('未找到该地点，请尝试其他关键词');
+                }
+
+                // 清理
+                delete window[callbackName];
+                if (script.parentNode) {
+                    document.body.removeChild(script);
+                }
+
+                searchBtn.textContent = '搜索';
+                searchBtn.disabled = false;
+            };
+
+            const script = document.createElement('script');
+            script.src = `https://api.map.baidu.com/place/v2/search?query=${encodeURIComponent(query)}&region=全国&output=json&ak=${BAIDU_AK}&callback=${callbackName}`;
+            script.onerror = function() {
+                alert('搜索失败，请检查网络连接');
+                delete window[callbackName];
+                if (script.parentNode) {
+                    document.body.removeChild(script);
+                }
+                searchBtn.textContent = '搜索';
+                searchBtn.disabled = false;
+            };
+            document.body.appendChild(script);
+        }
+
+        searchBtn.addEventListener('click', searchLocation);
+        searchInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                searchLocation();
+            }
+        });
+
+        // 定位功能
+        document.getElementById('locate-btn').addEventListener('click', () => {
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(
+                    (position) => {
+                        const lat = position.coords.latitude;
+                        const lng = position.coords.longitude;
+
+                        if (currentMode === '2d' && leafletMap) {
+                            leafletMap.setView([lat, lng], 13);
+                            L.marker([lat, lng]).addTo(leafletMap)
+                                .bindPopup('当前位置')
+                                .openPopup();
+                        } else if (currentMode === '3d' && threeScene) {
+                            const targetPos = latLonToVector3(lat, lng, 8);
+                            threeCamera.position.copy(targetPos);
+                            threeCamera.lookAt(0, 0, 0);
+                            threeControls.update();
+                        }
+
+                        document.getElementById('status-msg').innerText = "已定位到当前位置";
+                    },
+                    (error) => {
+                        alert('无法获取位置信息');
+                        console.error(error);
+                    }
+                );
+            } else {
+                alert('您的浏览器不支持地理定位');
+            }
+        });
+
+        // 经纬度格式切换
+        document.getElementById('latlon-format-toggle').addEventListener('click', () => {
+            latlonFormat = latlonFormat === 'decimal' ? 'dms' : 'decimal';
+            const toggleBtn = document.getElementById('latlon-format-toggle');
+            toggleBtn.textContent = latlonFormat === 'decimal' ? '°' : "°'";
+        });
+
+        // 主面板折叠功能
+        const mainPanel = document.getElementById('main-panel');
+        const collapseMainBtn = document.getElementById('collapse-main-btn');
+        const zoomControlLeft = document.getElementById('zoom-control-left');
+        const searchBox = document.getElementById('search-box');
+        let isMainCollapsed = false;
+
+        collapseMainBtn.addEventListener('click', () => {
+            isMainCollapsed = !isMainCollapsed;
+            if (isMainCollapsed) {
+                mainPanel.classList.add('collapsed');
+                zoomControlLeft.classList.add('collapsed');
+                searchBox.classList.add('collapsed');
+                collapseMainBtn.innerHTML = '▶';
+                collapseMainBtn.title = '展开';
+            } else {
+                mainPanel.classList.remove('collapsed');
+                zoomControlLeft.classList.remove('collapsed');
+                searchBox.classList.remove('collapsed');
+                collapseMainBtn.innerHTML = '◀';
+                collapseMainBtn.title = '折叠';
+            }
+        });
+
+        // 图层切换面板折叠功能
+        const layerPanel = document.getElementById('layer-panel');
+        const collapseLayerBtn = document.getElementById('collapse-layer-btn');
+        const zoomControlRight = document.getElementById('zoom-control-right');
+        let isLayerCollapsed = false;
+
+        collapseLayerBtn.addEventListener('click', () => {
+            isLayerCollapsed = !isLayerCollapsed;
+            if (isLayerCollapsed) {
+                layerPanel.classList.add('collapsed');
+                zoomControlRight.classList.add('collapsed');
+                collapseLayerBtn.innerHTML = '▶';
+                collapseLayerBtn.title = '展开';
+            } else {
+                layerPanel.classList.remove('collapsed');
+                zoomControlRight.classList.remove('collapsed');
+                collapseLayerBtn.innerHTML = '◀';
+                collapseLayerBtn.title = '折叠';
+            }
+        });
+
+        // 图层切换面板选项点击
+        document.querySelectorAll('.layer-option').forEach(option => {
+            option.addEventListener('click', () => {
+                document.querySelectorAll('.layer-option').forEach(opt => opt.classList.remove('active'));
+                option.classList.add('active');
+
+                const layerType = option.getAttribute('data-layer');
+
+                // 切换底图
+                if (currentMode === '2d' && leafletMap) {
+                    Object.values(leafletLayers).forEach(l => leafletMap.removeLayer(l));
+                    if (leafletLayers[layerType]) {
+                        leafletLayers[layerType].addTo(leafletMap);
+                    }
+                }
+                
+                // 3D模式下只更新支持的图层
+                if (currentMode === '3d') {
+                    updateThreeBaseLayer(layerType);
+                }
+            });
+        });
+
+        window.addEventListener('load', () => {
+            initLeaflet();
+            initThreeJS();
+            preloadTextures();
+
+            // 监听缩放事件
+            if (leafletMap) {
+                leafletMap.on('zoomend', updateZoomLevel);
+            }
+
+            document.getElementById('btn-2d').onclick = () => toggleMode('2d');
+            document.getElementById('btn-3d').onclick = () => toggleMode('3d');
+            
+            document.getElementById('grid-toggle').onchange = (e) => {
+                toggleGrid(e.target.checked);
+            };
+            
+            document.getElementById('grid-color').oninput = (e) => {
+                gridColor = e.target.value;
+                if (gridVisible) {
+                    if (currentMode === '2d') {
+                        createLeafletGrid();
+                    } else {
+                        createThreeGrid();
+                    }
+                }
+                if (showSpecialLat) {
+                    if (currentMode === '2d') {
+                        createLeafletSpecialLat();
+                    } else {
+                        createThreeSpecialLat();
+                    }
+                }
+            };
+            
+            document.getElementById('grid-weight').oninput = (e) => {
+                gridWeight = parseFloat(e.target.value);
+                document.getElementById('grid-weight-value').textContent = gridWeight;
+                if (gridVisible) {
+                    if (currentMode === '2d') {
+                        createLeafletGrid();
+                    } else {
+                        createThreeGrid();
+                    }
+                }
+                if (showSpecialLat) {
+                    if (currentMode === '2d') {
+                        createLeafletSpecialLat();
+                    } else {
+                        createThreeSpecialLat();
+                    }
+                }
+            };
+            
+            document.getElementById('grid-spacing').onchange = (e) => {
+                gridSpacing = parseInt(e.target.value) || 10;
+                if (gridVisible) {
+                    if (currentMode === '2d') {
+                        createLeafletGrid();
+                    } else {
+                        createThreeGrid();
+                    }
+                }
+            };
+            
+            document.getElementById('show-special-lat').onchange = (e) => {
+                toggleSpecialLat(e.target.checked);
+            };
+
+            document.getElementById('china-boundary-toggle').onchange = (e) => {
+                showChinaBoundary = e.target.checked;
+                loadChinaBoundary();
+            };
+
+            document.getElementById('file-input').onchange = (e) => {
+                if (e.target.files.length > 0) handleFile(e.target.files[0]);
+            };
+
+            window.addEventListener('resize', () => {
+                if (leafletMap) {
+                    leafletMap.invalidateSize();
+                }
+                if (threeRenderer && currentMode === '3d') {
+                    threeRenderer.setSize(window.innerWidth, window.innerHeight);
+                    threeCamera.aspect = window.innerWidth / window.innerHeight;
+                    threeCamera.updateProjectionMatrix();
+                }
+            });
+        });
+    </script>
+</body>
+</html>
