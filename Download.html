@@ -1611,7 +1611,7 @@
                     
                     const handleConfirm = async () => {
                         // 在用户点击确认时立即打开新窗口（必须在用户点击事件中同步执行）
-                        const newWindow = window.open('地形模拟 9图层版自动打开.html?autoLoad=pending', '_blank');
+                        const newWindow = window.open('地形模拟.html?autoLoad=pending', '_blank');
                         
                         modal.classList.add('hidden');
                         confirmBtn.removeEventListener('click', handleConfirm);
@@ -1633,7 +1633,7 @@
                 });
             } else {
                 // 不需要选择图层，直接打开新窗口
-                const newWindow = window.open('地形模拟 9图层版自动打开.html?autoLoad=pending', '_blank');
+                const newWindow = window.open('地形模拟.html?autoLoad=pending', '_blank');
                 await performDownloadAndOpen(key, baseFilename, w, s, e, n, demType, url, newWindow);
             }
         };
