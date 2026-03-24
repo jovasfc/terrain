@@ -10,6 +10,7 @@
     <script src="https://cdn.jsdelivr.net/npm/geotiff@2.0.1/dist-browser/geotiff.bundle.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/exif-js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/shpjs@4.0.4/dist/shp.min.js"></script>
     <style>
         body { margin: 0; overflow: hidden; background-color: #09090b; font-family: ui-sans-serif, system-ui, sans-serif; }
         canvas { display: block; }
@@ -502,6 +503,29 @@
     <button id="calc-line-length" class="btn-action">计算长度</button>
     <button id="draw-profile" class="btn-action">剖面图</button>
     <button id="clear-drawings" class="btn-action btn-danger">清除绘制</button>
+    <div style="width: 1px; height: 24px; background: rgba(255,255,255,0.1); margin: 0 4px;"></div>
+    <label class="btn-action cursor-pointer" title="导入JSON或SHP文件">
+        📥 导入
+        <input type="file" id="import-file-input" accept=".json,.shp" class="hidden">
+    </label>
+    <button id="export-geojson" class="btn-action" title="导出为JSON文件">📤 保存</button>
+</div>
+
+<!-- 命名对话框 -->
+<div id="name-dialog" class="fixed inset-0 bg-black/50 z-[10001] hidden flex items-center justify-center">
+    <div class="bg-[#1a1a1d] rounded-2xl shadow-2xl p-6 max-w-sm w-full mx-4 border border-white/10">
+        <h3 class="text-lg font-bold text-white mb-4">输入名称</h3>
+        <input type="text" id="feature-name-input" placeholder="输入点/线/面的名称" 
+               class="w-full px-3 py-2 bg-[#27272a] border border-[#3f3f46] rounded-lg text-white text-sm outline-none focus:border-blue-500 mb-4">
+        <div class="flex gap-3">
+            <button id="cancel-name" class="flex-1 py-2 px-4 bg-[#3f3f46] hover:bg-[#52525b] text-white rounded-lg font-medium transition text-sm">
+                取消
+            </button>
+            <button id="confirm-name" class="flex-1 py-2 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition text-sm">
+                确认
+            </button>
+        </div>
+    </div>
 </div>
 
 <!-- 右侧配色面板 -->
@@ -566,6 +590,11 @@
     let previewPoints = [];
     let previewPointMarkers = [];
     let tempPreviewMarker = null;
+    
+    // 存储所有绘图要素的数据（用于导出）
+    let drawingFeatures = [];
+    let pendingFeature = null; // 等待命名的要素
+    let pendingFeatureCallback = null; // 命名完成后的回调
     
     const paletteData = [
         { name: '经典地理', colors: [0x051a10, 0x14311c, 0x2a4d31, 0x4d5d3d, 0x7b6d4e, 0xa38c6d, 0xd4c0a1, 0xffffff] },
@@ -1178,6 +1207,14 @@
         document.getElementById('calc-line-length').addEventListener('click', calculateLineLengths);
         document.getElementById('draw-profile').addEventListener('click', generateProfile);
         document.getElementById('show-texture-toggle').addEventListener('change', toggleTexture);
+        
+        // 导入导出事件
+        document.getElementById('import-file-input').addEventListener('change', handleFileImport);
+        document.getElementById('export-geojson').addEventListener('click', exportGeoJSON);
+        
+        // 命名对话框事件
+        document.getElementById('confirm-name').addEventListener('click', confirmFeatureName);
+        document.getElementById('cancel-name').addEventListener('click', cancelFeatureName);
         
         // 绘制鼠标事件
         renderer.domElement.addEventListener('mousedown', onDrawingMouseDown);
@@ -4450,23 +4487,25 @@
         const now = new Date();
         const timestamp = `${now.getFullYear()}${(now.getMonth()+1).toString().padStart(2,'0')}${now.getDate().toString().padStart(2,'0')}${now.getHours().toString().padStart(2,'0')}${now.getMinutes().toString().padStart(2,'0')}`;
 
-        // 获取高程范围
-        let minHeight = Infinity, maxHeight = -Infinity;
+        // 获取灰度高程范围
+        let minGray = Infinity, maxGray = -Infinity;
         for(let i = 0; i < heightData.length; i++) {
-            minHeight = Math.min(minHeight, heightData[i]);
-            maxHeight = Math.max(maxHeight, heightData[i]);
+            minGray = Math.min(minGray, heightData[i]);
+            maxGray = Math.max(maxGray, heightData[i]);
         }
 
-        // 计算等高距（参考gd copy.html的自动计算逻辑）
-        const diff = maxHeight - minHeight;
-        let ideal = diff / 12;
-        const magnitude = Math.pow(10, Math.floor(Math.log10(ideal)));
-        const res = ideal / magnitude;
-        let step;
-        if (res < 1.5) step = 1 * magnitude;
-        else if (res < 3.5) step = 2 * magnitude;
-        else if (res < 7.5) step = 5 * magnitude;
-        else step = 10 * magnitude;
+        // 获取实际高程范围（来自DEM信息）
+        const demMin = (window.demInfo && window.demInfo.min) ? window.demInfo.min : minGray;
+        const demMax = (window.demInfo && window.demInfo.max) ? window.demInfo.max : maxGray;
+        const demRange = demMax - demMin;
+        const grayRange = maxGray - minGray;
+
+        // 使用用户设置的自定义等高距（实际高程值）
+        const sliderValue = parseFloat(document.getElementById('contour-spacing').value);
+        const logValue = logarithmicTransform(sliderValue, 1, 50);
+        const actualStep = calculateActualContourSpacing(logValue);
+
+        console.log('导出等高线使用等高距:', actualStep, '实际高程范围:', demMin, '-', demMax);
 
         // 设置导出分辨率（提高到1600px宽）
         const exportWidth = 1600;
@@ -4480,22 +4519,27 @@
         let svgPaths = "";
         let svgTexts = "";
 
-        for (let v = Math.ceil(minHeight / step) * step; v <= maxHeight; v += step) {
-            const targetGray = ((v - minHeight) / (maxHeight - minHeight)) * 255;
+        // 根据实际高程值计算等高线（从第一个大于等于最小高程的等高距倍数开始）
+        const firstContour = Math.ceil(demMin / actualStep) * actualStep;
+        for (let actualElevation = firstContour; actualElevation <= demMax; actualElevation += actualStep) {
+            // 将实际高程转换为灰度值
+            const normalizedElevation = (actualElevation - demMin) / demRange;
+            const targetGray = minGray + normalizedElevation * grayRange;
+
             const segments = getContourSegments(data, width, height, targetGray);
             if (segments.length === 0) continue;
 
-            const isMajor = v % (step * 5) === 0;
+            const isMajor = Math.round(actualElevation / actualStep) % 5 === 0;
             const color = isMajor ? '#52525b' : '#a1a1aa';
             const weight = isMajor ? 0.8 : 0.4;
-            
+
             let pathData = "";
             segments.forEach((seg, i) => {
                 const [p1, p2] = seg;
                 pathData += `M${p1[0].toFixed(1)},${p1[1].toFixed(1)} L${p2[0].toFixed(1)},${p2[1].toFixed(1)} `;
-                
+
                 if (isMajor && i === Math.floor(segments.length / 2)) {
-                    svgTexts += `<text x="${p1[0]}" y="${p1[1]}" font-family="sans-serif" font-size="9" fill="#3f3f46" text-anchor="middle">${v}</text>`;
+                    svgTexts += `<text x="${p1[0]}" y="${p1[1]}" font-family="sans-serif" font-size="9" fill="#3f3f46" text-anchor="middle">${Math.round(actualElevation)}</text>`;
                 }
             });
             svgPaths += `<path d="${pathData}" stroke="${color}" stroke-width="${weight}" fill="none"/>`;
@@ -5208,9 +5252,7 @@
                 currentDrawing = null;
             } else if (drawingMode === 'line') {
                 if (isDoubleClick && drawingPoints.length >= 2) {
-                    const polyline = createPolyline(drawingPoints);
-                    drawingsGroup.add(polyline);
-                    
+                    // 先清除预览
                     previewPointMarkers.forEach(marker => {
                         drawingsGroup.remove(marker);
                     });
@@ -5221,8 +5263,45 @@
                         previewLine = null;
                     }
                     
+                    // 保存当前绘制的点
+                    const finalPoints = [...drawingPoints];
+                    
+                    // 清除绘制状态
                     drawingPoints = [];
                     previewPoints = [];
+                    
+                    // 使用原始函数创建线（不弹出命名对话框）
+                    const polyline = _originalCreatePolyline(finalPoints);
+                    if (polyline) {
+                        // 弹出命名对话框
+                        const featureData = {
+                            type: 'line',
+                            coordinates: finalPoints.map(p => [p.x, p.y, p.z]),
+                            name: ''
+                        };
+                        
+                        showNameDialog(featureData, (namedFeature) => {
+                            if (namedFeature) {
+                                polyline.userData = {
+                                    type: 'line',
+                                    name: namedFeature.name,
+                                    featureId: Date.now() + Math.random()
+                                };
+                                
+                                // 添加名称标签
+                                const center = getFeatureCenter(namedFeature);
+                                const label = createFeatureLabel(namedFeature.name, center);
+                                polyline.add(label);
+                                
+                                // 保存到要素列表
+                                drawingFeatures.push({
+                                    ...namedFeature,
+                                    featureId: polyline.userData.featureId
+                                });
+                            }
+                            drawingsGroup.add(polyline);
+                        });
+                    }
                 } else {
                     drawingPoints.push(point);
                     
@@ -5249,9 +5328,7 @@
                 }
             } else if (drawingMode === 'polygon') {
                 if (isDoubleClick && drawingPoints.length >= 3) {
-                    const polygon = createPolygon(drawingPoints);
-                    drawingsGroup.add(polygon);
-                    
+                    // 先清除预览
                     previewPointMarkers.forEach(marker => {
                         drawingsGroup.remove(marker);
                     });
@@ -5262,8 +5339,45 @@
                         previewLine = null;
                     }
                     
+                    // 保存当前绘制的点
+                    const finalPoints = [...drawingPoints];
+                    
+                    // 清除绘制状态
                     drawingPoints = [];
                     previewPoints = [];
+                    
+                    // 使用原始函数创建面（不弹出命名对话框）
+                    const polygon = _originalCreatePolygon(finalPoints);
+                    if (polygon) {
+                        // 弹出命名对话框
+                        const featureData = {
+                            type: 'polygon',
+                            coordinates: finalPoints.map(p => [p.x, p.y, p.z]),
+                            name: ''
+                        };
+                        
+                        showNameDialog(featureData, (namedFeature) => {
+                            if (namedFeature) {
+                                polygon.userData = {
+                                    type: 'polygon',
+                                    name: namedFeature.name,
+                                    featureId: Date.now() + Math.random()
+                                };
+                                
+                                // 添加名称标签
+                                const center = getFeatureCenter(namedFeature);
+                                const label = createFeatureLabel(namedFeature.name, center);
+                                polygon.add(label);
+                                
+                                // 保存到要素列表
+                                drawingFeatures.push({
+                                    ...namedFeature,
+                                    featureId: polygon.userData.featureId
+                                });
+                            }
+                            drawingsGroup.add(polygon);
+                        });
+                    }
                 } else if (!isDoubleClick) {
                     drawingPoints.push(point);
                     
@@ -6060,6 +6174,463 @@
         
         return line;
     }
+
+    // ==================== 导入导出功能 ====================
+    
+    // 显示命名对话框
+    function showNameDialog(feature, callback) {
+        pendingFeature = feature;
+        pendingFeatureCallback = callback;
+        document.getElementById('feature-name-input').value = feature.name || '';
+        document.getElementById('name-dialog').classList.remove('hidden');
+    }
+    
+    // 确认命名
+    function confirmFeatureName() {
+        const name = document.getElementById('feature-name-input').value.trim();
+        if (pendingFeature) {
+            pendingFeature.name = name || '未命名';
+            if (pendingFeatureCallback) {
+                pendingFeatureCallback(pendingFeature);
+            }
+        }
+        document.getElementById('name-dialog').classList.add('hidden');
+        pendingFeature = null;
+        pendingFeatureCallback = null;
+    }
+    
+    // 取消命名
+    function cancelFeatureName() {
+        document.getElementById('name-dialog').classList.add('hidden');
+        if (pendingFeatureCallback) {
+            pendingFeatureCallback(null);
+        }
+        pendingFeature = null;
+        pendingFeatureCallback = null;
+    }
+    
+    // 创建带名称标签的要素
+    function createNamedFeature(mesh, featureData) {
+        const group = new THREE.Group();
+        group.add(mesh);
+        
+        // 存储要素数据
+        group.userData = {
+            type: featureData.type,
+            name: featureData.name,
+            featureId: Date.now() + Math.random()
+        };
+        
+        // 添加名称标签
+        if (featureData.name) {
+            const label = createFeatureLabel(featureData.name, getFeatureCenter(featureData));
+            group.add(label);
+        }
+        
+        return group;
+    }
+    
+    // 获取要素中心点
+    function getFeatureCenter(feature) {
+        if (feature.type === 'point') {
+            return new THREE.Vector3(feature.coordinates[0], feature.coordinates[1], feature.coordinates[2]);
+        } else if (feature.type === 'line' || feature.type === 'polygon') {
+            let center = new THREE.Vector3();
+            feature.coordinates.forEach(coord => {
+                center.x += coord[0];
+                center.y += coord[1];
+                center.z += coord[2];
+            });
+            center.divideScalar(feature.coordinates.length);
+            return center;
+        }
+        return new THREE.Vector3();
+    }
+    
+    // 创建要素名称标签
+    function createFeatureLabel(text, position, isPoint = false) {
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d');
+        const fontSize = 18; // 字体从14增大到18
+        context.font = `bold ${fontSize}px sans-serif`;
+        
+        const textWidth = context.measureText(text).width;
+        canvas.width = textWidth + 20; // 增加内边距
+        canvas.height = fontSize + 16; // 增加内边距
+        
+        // 绘制背景
+        context.fillStyle = 'rgba(0, 0, 0, 0.75)';
+        context.roundRect(0, 0, canvas.width, canvas.height, 8);
+        context.fill();
+        
+        // 绘制文字
+        context.font = `bold ${fontSize}px sans-serif`;
+        context.fillStyle = '#ffffff';
+        context.textAlign = 'center';
+        context.textBaseline = 'middle';
+        context.fillText(text, canvas.width / 2, canvas.height / 2);
+        
+        const texture = new THREE.CanvasTexture(canvas);
+        const material = new THREE.SpriteMaterial({ 
+            map: texture,
+            depthTest: false,
+            depthWrite: false
+        });
+        const sprite = new THREE.Sprite(material);
+        sprite.position.copy(position);
+        // 点的名称往上移动更多（从+5改为+12），线和面保持+8
+        sprite.position.y += isPoint ? 12 : 8;
+        sprite.scale.set(canvas.width / 8, canvas.height / 8, 1); // 调整缩放比例
+        sprite.renderOrder = 10;
+        
+        return sprite;
+    }
+    
+    // 保存原始创建函数的引用（在它们被修改之前）
+    const _originalCreatePointMarker = createPointMarker;
+    const _originalCreatePolyline = createPolyline;
+    const _originalCreatePolygon = createPolygon;
+    const _originalClearDrawings = clearDrawings;
+    
+    // 修改点创建函数，添加命名功能
+    createPointMarker = function(position) {
+        const group = _originalCreatePointMarker(position);
+        
+        // 创建要素数据
+        const featureData = {
+            type: 'point',
+            coordinates: [position.x, position.y, position.z],
+            name: ''
+        };
+        
+        // 显示命名对话框
+        showNameDialog(featureData, (namedFeature) => {
+            if (namedFeature) {
+                group.userData = {
+                    type: 'point',
+                    name: namedFeature.name,
+                    featureId: Date.now() + Math.random()
+                };
+                
+                // 添加名称标签（点要素，传入true）
+                const label = createFeatureLabel(namedFeature.name, position, true);
+                group.add(label);
+                
+                // 保存到要素列表
+                drawingFeatures.push({
+                    ...namedFeature,
+                    featureId: group.userData.featureId
+                });
+            }
+        });
+        
+        return group;
+    };
+    
+    // 修改线创建函数（仅用于预览，不弹出命名对话框）
+    createPolyline = function(points) {
+        // 直接使用原始函数创建，不添加命名功能（命名在双击完成时处理）
+        return _originalCreatePolyline(points);
+    };
+    
+    // 修改面创建函数（仅用于预览，不弹出命名对话框）
+    createPolygon = function(points) {
+        // 直接使用原始函数创建，不添加命名功能（命名在双击完成时处理）
+        return _originalCreatePolygon(points);
+    };
+    
+    // 修改清除绘制函数
+    clearDrawings = function() {
+        _originalClearDrawings();
+        drawingFeatures = [];
+    };
+    
+    // 统一处理文件导入
+    function handleFileImport(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+        
+        const fileName = file.name.toLowerCase();
+        
+        if (fileName.endsWith('.json')) {
+            importGeoJSON(file);
+        } else if (fileName.endsWith('.shp')) {
+            importSHP(file);
+        } else {
+            alert('不支持的文件格式，请上传 .json 或 .shp 文件');
+        }
+        
+        event.target.value = '';
+    }
+    
+    // 导入GeoJSON
+    function importGeoJSON(file) {
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            try {
+                const geojson = JSON.parse(e.target.result);
+                processGeoJSON(geojson);
+                alert('JSON导入成功！');
+            } catch (error) {
+                alert('JSON导入失败：' + error.message);
+            }
+        };
+        reader.readAsText(file);
+    }
+    
+    // 处理GeoJSON数据
+    function processGeoJSON(geojson) {
+        if (!geojson.features || !Array.isArray(geojson.features)) {
+            alert('无效的GeoJSON格式');
+            return;
+        }
+        
+        // 检测坐标类型
+        const fileCoordType = geojson.properties?.coordType || 
+                              (geojson.features[0]?.properties?.coordType) || 'xyz';
+        const fileTerrainRealSize = geojson.properties?.terrainRealSize;
+        
+        // 判断是否需要坐标转换
+        const currentHasGeo = window.terrainRealSize && window.terrainRealSize.north;
+        const fileHasGeo = fileCoordType === 'geo' && fileTerrainRealSize;
+        
+        let needConvert = false;
+        let convertType = null;
+        
+        if (fileHasGeo && currentHasGeo) {
+            // 文件是地理坐标，当前地形也有地理坐标，直接转换
+            needConvert = true;
+            convertType = 'geo_to_xyz';
+        } else if (fileCoordType === 'geo' && !currentHasGeo) {
+            // 文件是地理坐标，但当前地形没有地理坐标
+            alert('警告：文件包含地理坐标，但当前地形没有地理信息。将尝试使用原始XYZ坐标（如果可用）。');
+        } else if (fileCoordType === 'xyz' && currentHasGeo) {
+            // 文件是XYZ坐标，当前地形有地理坐标，直接使用XYZ
+            console.log('导入XYZ坐标到有地理信息的地形');
+        }
+        
+        geojson.features.forEach(feature => {
+            const type = feature.geometry.type;
+            const name = feature.properties?.name || '未命名';
+            const featureCoordType = feature.properties?.coordType || fileCoordType;
+            
+            let coords = feature.geometry.coordinates;
+            
+            // 坐标转换
+            if (type === 'Point') {
+                let xyz = coords;
+                if (featureCoordType === 'geo' && needConvert) {
+                    xyz = geoToXyz(coords);
+                    if (!xyz) {
+                        console.warn('无法转换地理坐标:', coords);
+                        return;
+                    }
+                }
+                const position = new THREE.Vector3(xyz[0], xyz[1], xyz[2]);
+                const marker = _originalCreatePointMarker(position);
+                marker.userData = { type: 'point', name: name, featureId: Date.now() + Math.random() };
+                
+                // 添加名称标签（点要素，传入true）
+                const label = createFeatureLabel(name, position, true);
+                marker.add(label);
+                
+                drawingsGroup.add(marker);
+                drawingFeatures.push({
+                    type: 'point',
+                    coordinates: [position.x, position.y, position.z],
+                    name: name,
+                    featureId: marker.userData.featureId
+                });
+                
+            } else if (type === 'LineString') {
+                let xyzCoords = coords;
+                if (featureCoordType === 'geo' && needConvert) {
+                    xyzCoords = coords.map(c => {
+                        const xyz = geoToXyz(c);
+                        return xyz || c;
+                    });
+                }
+                const points = xyzCoords.map(c => new THREE.Vector3(c[0], c[1], c[2]));
+                const line = _originalCreatePolyline(points);
+                if (!line) return;
+                
+                line.userData = { type: 'line', name: name, featureId: Date.now() + Math.random() };
+                
+                // 添加名称标签
+                const center = new THREE.Vector3();
+                points.forEach(p => center.add(p));
+                center.divideScalar(points.length);
+                const label = createFeatureLabel(name, center);
+                line.add(label);
+                
+                drawingsGroup.add(line);
+                drawingFeatures.push({
+                    type: 'line',
+                    coordinates: points.map(p => [p.x, p.y, p.z]),
+                    name: name,
+                    featureId: line.userData.featureId
+                });
+                
+            } else if (type === 'Polygon') {
+                let xyzCoords = coords[0]; // 外环
+                if (featureCoordType === 'geo' && needConvert) {
+                    xyzCoords = coords[0].map(c => {
+                        const xyz = geoToXyz(c);
+                        return xyz || c;
+                    });
+                }
+                const points = xyzCoords.map(c => new THREE.Vector3(c[0], c[1], c[2]));
+                const polygon = _originalCreatePolygon(points);
+                if (polygon) {
+                    polygon.userData = { type: 'polygon', name: name, featureId: Date.now() + Math.random() };
+                    
+                    // 添加名称标签
+                    const center = new THREE.Vector3();
+                    points.forEach(p => center.add(p));
+                    center.divideScalar(points.length);
+                    const label = createFeatureLabel(name, center);
+                    polygon.add(label);
+                    
+                    drawingsGroup.add(polygon);
+                    drawingFeatures.push({
+                        type: 'polygon',
+                        coordinates: points.map(p => [p.x, p.y, p.z]),
+                        name: name,
+                        featureId: polygon.userData.featureId
+                    });
+                }
+            }
+        });
+    }
+    
+    // 导入SHP文件
+    function importSHP(file) {
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            try {
+                const arrayBuffer = e.target.result;
+                shp(arrayBuffer).then(function(geojson) {
+                    processGeoJSON(geojson);
+                    alert('SHP导入成功！');
+                }).catch(function(error) {
+                    alert('SHP解析失败：' + error.message);
+                });
+            } catch (error) {
+                alert('SHP导入失败：' + error.message);
+            }
+        };
+        reader.readAsArrayBuffer(file);
+    }
+    
+    // 将XYZ坐标转换为经纬度坐标
+    function xyzToGeo(xyz) {
+        if (!window.terrainRealSize || !window.terrainRealSize.north) {
+            return null;
+        }
+        const size = window.terrainRealSize;
+        const lonDiff = size.east - size.west;
+        const latDiff = size.north - size.south;
+        
+        const lon = size.west + (xyz[0] / size.displayWidth) * lonDiff;
+        const lat = size.north - (xyz[2] / size.displayHeight) * latDiff;
+        const elevation = xyz[1];
+        
+        return [lon, lat, elevation];
+    }
+    
+    // 将经纬度坐标转换为XYZ坐标
+    function geoToXyz(geo) {
+        if (!window.terrainRealSize || !window.terrainRealSize.north) {
+            return null;
+        }
+        const size = window.terrainRealSize;
+        const lonDiff = size.east - size.west;
+        const latDiff = size.north - size.south;
+        
+        const x = ((geo[0] - size.west) / lonDiff) * size.displayWidth;
+        const z = ((size.north - geo[1]) / latDiff) * size.displayHeight;
+        const y = geo[2] || 0;
+        
+        return [x, y, z];
+    }
+    
+    // 导出GeoJSON
+    function exportGeoJSON() {
+        if (drawingFeatures.length === 0) {
+            alert('没有可导出的要素');
+            return;
+        }
+        
+        const hasGeoCoords = window.terrainRealSize && window.terrainRealSize.north;
+        const coordType = hasGeoCoords ? 'geo' : 'xyz';
+        
+        const features = drawingFeatures.map(feature => {
+            let geometry = {};
+            let coordinates;
+            
+            if (hasGeoCoords) {
+                if (feature.type === 'point') {
+                    coordinates = xyzToGeo(feature.coordinates);
+                } else if (feature.type === 'line') {
+                    coordinates = feature.coordinates.map(c => xyzToGeo(c));
+                } else if (feature.type === 'polygon') {
+                    coordinates = [feature.coordinates.map(c => xyzToGeo(c))];
+                }
+            } else {
+                if (feature.type === 'point') {
+                    coordinates = feature.coordinates;
+                } else if (feature.type === 'line') {
+                    coordinates = feature.coordinates;
+                } else if (feature.type === 'polygon') {
+                    coordinates = [feature.coordinates];
+                }
+            }
+            
+            if (feature.type === 'point') {
+                geometry = { type: 'Point', coordinates: coordinates };
+            } else if (feature.type === 'line') {
+                geometry = { type: 'LineString', coordinates: coordinates };
+            } else if (feature.type === 'polygon') {
+                geometry = { type: 'Polygon', coordinates: coordinates };
+            }
+            
+            return {
+                type: 'Feature',
+                geometry: geometry,
+                properties: {
+                    name: feature.name || '未命名',
+                    coordType: coordType
+                }
+            };
+        });
+        
+        const geojson = {
+            type: 'FeatureCollection',
+            features: features,
+            properties: {
+                coordType: coordType,
+                terrainRealSize: hasGeoCoords ? {
+                    north: window.terrainRealSize.north,
+                    south: window.terrainRealSize.south,
+                    east: window.terrainRealSize.east,
+                    west: window.terrainRealSize.west,
+                    displayWidth: window.terrainRealSize.displayWidth,
+                    displayHeight: window.terrainRealSize.displayHeight
+                } : null
+            }
+        };
+        
+        const blob = new Blob([JSON.stringify(geojson, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'drawings_' + new Date().getTime() + '.json';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }
+    
 </script>
 </body>
 </html>
