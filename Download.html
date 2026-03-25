@@ -144,10 +144,13 @@
                     <div class="space-y-2">
                         <label class="text-xs text-slate-500">卫星图下载等级 (Zoom Level)</label>
                         <select id="zoom-select" class="w-full px-3 py-2 border rounded-lg text-sm bg-slate-50 outline-none focus:ring-2 focus:ring-blue-500">
+                            <option value="current-2">比当前地图视图低二级</option>
                             <option value="current-1">比当前地图视图低一级</option>
                             <option value="current" selected>与当前地图视图一致</option>
                             <option value="current+1">比当前地图视图高一级</option>
                             <option value="current+2">比当前地图视图高二级</option>
+                            <option value="current+3">比当前地图视图高三级</option>
+                            <option value="current+4">比当前地图视图高四级</option>
                         </select>
                         <p class="text-[10px] text-slate-400 italic">注：地图右上角显示当前查看的等级，建议下载等级略高于或等于查看等级。</p>
                     </div>
@@ -983,12 +986,40 @@
                     L.latLngBounds([selectedGeoBounds.south, selectedGeoBounds.west], [selectedGeoBounds.north, selectedGeoBounds.east]) :
                     selectedBounds;
 
-                // 设置目标层级
-                const zoom = targetZoom !== 'current' ? parseInt(targetZoom) : originalZoom;
+                // 获取当前图层的最大层级
+                const downloadLayerType = currentMapLayer;
+                const maxZoom = mapMaxZoom[downloadLayerType] || 19;
+
+                // 计算目标层级
+                let zoom;
+                if (targetZoom === 'current') {
+                    zoom = originalZoom;
+                } else if (targetZoom === 'current-2') {
+                    zoom = Math.max(1, originalZoom - 2);
+                } else if (targetZoom === 'current-1') {
+                    zoom = Math.max(1, originalZoom - 1);
+                } else if (targetZoom === 'current+1') {
+                    zoom = originalZoom + 1;
+                } else if (targetZoom === 'current+2') {
+                    zoom = originalZoom + 2;
+                } else if (targetZoom === 'current+3') {
+                    zoom = originalZoom + 3;
+                } else if (targetZoom === 'current+4') {
+                    zoom = originalZoom + 4;
+                } else {
+                    zoom = parseInt(targetZoom);
+                }
+                
+                // 限制最大层级
+                const finalZoom = Math.min(zoom, maxZoom);
+                if (zoom > maxZoom) {
+                    console.log(`地图 ${downloadLayerType} 的最大缩放层级为 ${maxZoom}，当前请求层级 ${zoom} 已超过，自动调整为 ${finalZoom}`);
+                    showStatus(`地图 ${mapLayerNames[downloadLayerType]} 最大层级 ${maxZoom}，已自动调整为 ${finalZoom}`, "orange");
+                }
                 
                 // 计算选择区域在目标层级下的像素尺寸
-                const nwPixel = map.project(boundsToUse.getNorthWest(), zoom);
-                const sePixel = map.project(boundsToUse.getSouthEast(), zoom);
+                const nwPixel = map.project(boundsToUse.getNorthWest(), finalZoom);
+                const sePixel = map.project(boundsToUse.getSouthEast(), finalZoom);
                 const totalWidth = Math.round(sePixel.x - nwPixel.x);
                 const totalHeight = Math.round(sePixel.y - nwPixel.y);
 
@@ -1008,7 +1039,7 @@
                                 map.once('moveend', () => setTimeout(res, 1000));
                                 const centerLat = (selectedGeoBounds.north + selectedGeoBounds.south) / 2;
                                 const centerLng = (selectedGeoBounds.east + selectedGeoBounds.west) / 2;
-                                map.setView([centerLat, centerLng], zoom, { animate: false });
+                                map.setView([centerLat, centerLng], finalZoom, { animate: false });
                             } else {
                                 setTimeout(res, 300);
                             }
@@ -1082,12 +1113,12 @@
                             const pixelX = nwPixel.x + col * tileSize + tileSize / 2;
                             const pixelY = nwPixel.y + row * tileSize + tileSize / 2;
                             const centerPoint = L.point(pixelX, pixelY);
-                            const centerLatLng = map.unproject(centerPoint, zoom);
+                            const centerLatLng = map.unproject(centerPoint, finalZoom);
 
                             // 移动地图到当前块中心
                             await new Promise((res) => {
                                 map.once('moveend', () => setTimeout(res, 800));
-                                map.setView(centerLatLng, zoom, { animate: false });
+                                map.setView(centerLatLng, finalZoom, { animate: false });
                             });
 
                             // 等待瓦片加载
@@ -1114,8 +1145,8 @@
                                 );
 
                                 // 获取当前视图中的选择区域坐标
-                                const blockNwLatLng = map.unproject(blockNwPixel, zoom);
-                                const blockSeLatLng = map.unproject(blockSePixel, zoom);
+                                const blockNwLatLng = map.unproject(blockNwPixel, finalZoom);
+                                const blockSeLatLng = map.unproject(blockSePixel, finalZoom);
                                 
                                 const viewNwPoint = map.latLngToContainerPoint(blockNwLatLng);
                                 const viewSePoint = map.latLngToContainerPoint(blockSeLatLng);
@@ -1319,12 +1350,18 @@
                 // 解析目标层级选项
                 if (targetZoom === 'current') {
                     requestedZoom = baseZoom;
+                } else if (targetZoom === 'current-2') {
+                    requestedZoom = Math.max(1, baseZoom - 2);
                 } else if (targetZoom === 'current-1') {
                     requestedZoom = Math.max(1, baseZoom - 1);
                 } else if (targetZoom === 'current+1') {
                     requestedZoom = baseZoom + 1;
                 } else if (targetZoom === 'current+2') {
                     requestedZoom = baseZoom + 2;
+                } else if (targetZoom === 'current+3') {
+                    requestedZoom = baseZoom + 3;
+                } else if (targetZoom === 'current+4') {
+                    requestedZoom = baseZoom + 4;
                 } else {
                     requestedZoom = parseInt(targetZoom);
                 }
