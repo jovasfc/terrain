@@ -964,9 +964,9 @@
             downloadOpenBtn.disabled = false;
         }
 
-        // 2. 导出卫星图
+        // 2. 导出卫星图（支持分块捕获拼接）
         async function captureSatelliteImage(filename) {
-            return new Promise((resolve) => {
+            return new Promise(async (resolve) => {
                 const targetZoom = zoomSelect.value;
                 const originalZoom = map.getZoom();
                 const originalCenter = map.getCenter();
@@ -979,74 +979,175 @@
                     west: selectedBounds.getWest()
                 } : null;
 
-                const prepareView = () => {
-                    return new Promise((res) => {
-                        if (targetZoom !== 'current') {
-                            map.once('moveend', () => setTimeout(res, 1000)); 
-                            // 使用保存的地理范围中心点，确保所有层级使用相同的地理范围
-                            if (selectedGeoBounds) {
+                const boundsToUse = selectedGeoBounds ? 
+                    L.latLngBounds([selectedGeoBounds.south, selectedGeoBounds.west], [selectedGeoBounds.north, selectedGeoBounds.east]) :
+                    selectedBounds;
+
+                // 设置目标层级
+                const zoom = targetZoom !== 'current' ? parseInt(targetZoom) : originalZoom;
+                
+                // 计算选择区域在目标层级下的像素尺寸
+                const nwPixel = map.project(boundsToUse.getNorthWest(), zoom);
+                const sePixel = map.project(boundsToUse.getSouthEast(), zoom);
+                const totalWidth = Math.round(sePixel.x - nwPixel.x);
+                const totalHeight = Math.round(sePixel.y - nwPixel.y);
+
+                // 获取地图容器的尺寸
+                const mapContainer = map.getContainer();
+                const viewWidth = mapContainer.clientWidth;
+                const viewHeight = mapContainer.clientHeight;
+
+                // 判断是否需要分块捕获
+                const needsTiling = totalWidth > viewWidth || totalHeight > viewHeight;
+
+                if (!needsTiling) {
+                    // 不需要分块，直接捕获
+                    const prepareView = () => {
+                        return new Promise((res) => {
+                            if (targetZoom !== 'current') {
+                                map.once('moveend', () => setTimeout(res, 1000));
                                 const centerLat = (selectedGeoBounds.north + selectedGeoBounds.south) / 2;
                                 const centerLng = (selectedGeoBounds.east + selectedGeoBounds.west) / 2;
-                                map.setView([centerLat, centerLng], parseInt(targetZoom), { animate: false });
+                                map.setView([centerLat, centerLng], zoom, { animate: false });
                             } else {
-                                map.setView(selectedBounds.getCenter(), parseInt(targetZoom), { animate: false });
+                                setTimeout(res, 300);
                             }
-                        } else {
-                            setTimeout(res, 300);
-                        }
+                        });
+                    };
+
+                    prepareView().then(() => {
+                        leafletImage(map, function(err, canvas) {
+                            if (err) {
+                                console.error(err);
+                                resolve(null);
+                                return;
+                            }
+                            
+                            const nwPoint = map.latLngToContainerPoint(boundsToUse.getNorthWest());
+                            const sePoint = map.latLngToContainerPoint(boundsToUse.getSouthEast());
+                            
+                            let x = Math.round(nwPoint.x);
+                            let y = Math.round(nwPoint.y);
+                            let width = Math.round(sePoint.x - nwPoint.x);
+                            let height = Math.round(sePoint.y - nwPoint.y);
+
+                            const canvasWidth = canvas.width;
+                            const canvasHeight = canvas.height;
+
+                            if (x < 0) { width += x; x = 0; }
+                            if (y < 0) { height += y; y = 0; }
+                            width = Math.min(width, canvasWidth - x);
+                            height = Math.min(height, canvasHeight - y);
+
+                            if (width <= 0 || height <= 0) {
+                                console.error("Selection bounds out of view at this zoom level.");
+                                resolve(null);
+                                return;
+                            }
+
+                            const cropCanvas = document.createElement('canvas');
+                            cropCanvas.width = width;
+                            cropCanvas.height = height;
+                            const ctx = cropCanvas.getContext('2d');
+                            ctx.drawImage(canvas, x, y, width, height, 0, 0, width, height);
+                            
+                            const dataUrl = cropCanvas.toDataURL("image/png");
+                            triggerDownload(dataUrl, filename || `sat_${Date.now()}.png`);
+                            
+                            if (targetZoom !== 'current') {
+                                map.setView(originalCenter, originalZoom, { animate: false });
+                            }
+                            resolve(true);
+                        });
                     });
-                };
+                } else {
+                    // 需要分块捕获
+                    showStatus(`区域较大，正在分块捕获...`, "blue");
+                    
+                    // 计算需要多少块
+                    const tileSize = Math.min(viewWidth, viewHeight) * 0.8; // 每块使用80%的视图
+                    const cols = Math.ceil(totalWidth / tileSize);
+                    const rows = Math.ceil(totalHeight / tileSize);
+                    
+                    // 创建最终画布
+                    const finalCanvas = document.createElement('canvas');
+                    finalCanvas.width = totalWidth;
+                    finalCanvas.height = totalHeight;
+                    const finalCtx = finalCanvas.getContext('2d');
 
-                prepareView().then(() => {
-                    leafletImage(map, function(err, canvas) {
-                        if (err) {
-                            console.error(err);
-                            resolve(null);
-                            return;
+                    // 分块捕获
+                    for (let row = 0; row < rows; row++) {
+                        for (let col = 0; col < cols; col++) {
+                            // 计算当前块的地理中心
+                            const pixelX = nwPixel.x + col * tileSize + tileSize / 2;
+                            const pixelY = nwPixel.y + row * tileSize + tileSize / 2;
+                            const centerPoint = L.point(pixelX, pixelY);
+                            const centerLatLng = map.unproject(centerPoint, zoom);
+
+                            // 移动地图到当前块中心
+                            await new Promise((res) => {
+                                map.once('moveend', () => setTimeout(res, 800));
+                                map.setView(centerLatLng, zoom, { animate: false });
+                            });
+
+                            // 等待瓦片加载
+                            await new Promise(res => setTimeout(res, 500));
+
+                            // 捕获当前视图
+                            const tileCanvas = await new Promise((tileRes) => {
+                                leafletImage(map, function(err, canvas) {
+                                    if (err) {
+                                        console.error(err);
+                                        tileRes(null);
+                                        return;
+                                    }
+                                    tileRes(canvas);
+                                });
+                            });
+
+                            if (tileCanvas) {
+                                // 计算当前块在最终图像中的位置
+                                const blockNwPixel = L.point(nwPixel.x + col * tileSize, nwPixel.y + row * tileSize);
+                                const blockSePixel = L.point(
+                                    Math.min(nwPixel.x + (col + 1) * tileSize, sePixel.x),
+                                    Math.min(nwPixel.y + (row + 1) * tileSize, sePixel.y)
+                                );
+
+                                // 获取当前视图中的选择区域坐标
+                                const blockNwLatLng = map.unproject(blockNwPixel, zoom);
+                                const blockSeLatLng = map.unproject(blockSePixel, zoom);
+                                
+                                const viewNwPoint = map.latLngToContainerPoint(blockNwLatLng);
+                                const viewSePoint = map.latLngToContainerPoint(blockSeLatLng);
+
+                                // 计算源坐标和目标坐标
+                                const srcX = Math.max(0, viewNwPoint.x);
+                                const srcY = Math.max(0, viewNwPoint.y);
+                                const srcWidth = Math.min(viewSePoint.x, tileCanvas.width) - srcX;
+                                const srcHeight = Math.min(viewSePoint.y, tileCanvas.height) - srcY;
+
+                                const destX = col * tileSize;
+                                const destY = row * tileSize;
+                                const destWidth = blockSePixel.x - blockNwPixel.x;
+                                const destHeight = blockSePixel.y - blockNwPixel.y;
+
+                                if (srcWidth > 0 && srcHeight > 0) {
+                                    finalCtx.drawImage(tileCanvas, srcX, srcY, srcWidth, srcHeight, destX, destY, destWidth, destHeight);
+                                }
+                            }
+
+                            showStatus(`正在捕获... (${row * cols + col + 1}/${rows * cols})`, "blue");
                         }
-                        
-                        // 使用保存的地理范围计算屏幕坐标，确保所有层级使用相同的地理范围
-                        const boundsToUse = selectedGeoBounds ? 
-                            L.latLngBounds([selectedGeoBounds.south, selectedGeoBounds.west], [selectedGeoBounds.north, selectedGeoBounds.east]) :
-                            selectedBounds;
-                        
-                        const nwPoint = map.latLngToContainerPoint(boundsToUse.getNorthWest());
-                        const sePoint = map.latLngToContainerPoint(boundsToUse.getSouthEast());
-                        
-                        let x = Math.round(nwPoint.x);
-                        let y = Math.round(nwPoint.y);
-                        let width = Math.round(sePoint.x - nwPoint.x);
-                        let height = Math.round(sePoint.y - nwPoint.y);
+                    }
 
-                        const canvasWidth = canvas.width;
-                        const canvasHeight = canvas.height;
-
-                        if (x < 0) { width += x; x = 0; }
-                        if (y < 0) { height += y; y = 0; }
-                        width = Math.min(width, canvasWidth - x);
-                        height = Math.min(height, canvasHeight - y);
-
-                        if (width <= 0 || height <= 0) {
-                            console.error("Selection bounds out of view at this zoom level.");
-                            resolve(null);
-                            return;
-                        }
-
-                        const cropCanvas = document.createElement('canvas');
-                        cropCanvas.width = width;
-                        cropCanvas.height = height;
-                        const ctx = cropCanvas.getContext('2d');
-                        ctx.drawImage(canvas, x, y, width, height, 0, 0, width, height);
-                        
-                        const dataUrl = cropCanvas.toDataURL("image/png");
-                        triggerDownload(dataUrl, filename || `sat_${Date.now()}.png`);
-                        
-                        if (targetZoom !== 'current') {
-                            map.setView(originalCenter, originalZoom, { animate: false });
-                        }
-                        resolve(true);
-                    });
-                });
+                    // 导出最终图像
+                    const dataUrl = finalCanvas.toDataURL("image/png");
+                    triggerDownload(dataUrl, filename || `sat_${Date.now()}.png`);
+                    
+                    // 恢复原始视图
+                    map.setView(originalCenter, originalZoom, { animate: false });
+                    resolve(true);
+                }
             });
         }
 
@@ -1177,9 +1278,9 @@
             };
         }
 
-        // 修改后的卫星图捕获函数，返回数据
+        // 修改后的卫星图捕获函数，返回数据（支持分块捕获拼接）
         async function captureSatelliteImageData(layerType = null, initialZoom = null) {
-            return new Promise((resolve) => {
+            return new Promise(async (resolve) => {
                 const targetZoom = zoomSelect.value;
                 const originalZoom = map.getZoom();
                 const originalCenter = map.getCenter();
@@ -1217,19 +1318,14 @@
                 
                 // 解析目标层级选项
                 if (targetZoom === 'current') {
-                    // 与当前地图视图一致
                     requestedZoom = baseZoom;
                 } else if (targetZoom === 'current-1') {
-                    // 比当前地图视图低一级
                     requestedZoom = Math.max(1, baseZoom - 1);
                 } else if (targetZoom === 'current+1') {
-                    // 比当前地图视图高一级
                     requestedZoom = baseZoom + 1;
                 } else if (targetZoom === 'current+2') {
-                    // 比当前地图视图高二级
                     requestedZoom = baseZoom + 2;
                 } else {
-                    // 使用用户指定的层级（数字）
                     requestedZoom = parseInt(targetZoom);
                 }
                 
@@ -1247,97 +1343,179 @@
                 showStatus(`正在捕获 ${currentLayerName} ${finalZoom}层级...`, "blue");
                 procText.innerText = `正在捕获 ${currentLayerName} ${finalZoom}层级...`;
 
-                const prepareView = () => {
-                    return new Promise((res) => {
-                        if (actualZoom !== 'current') {
-                            map.once('moveend', () => setTimeout(res, 1000));
-                            // 使用保存的地理范围中心点，确保所有层级使用相同的地理范围
-                            if (selectedGeoBounds) {
-                                const centerLat = (selectedGeoBounds.north + selectedGeoBounds.south) / 2;
-                                const centerLng = (selectedGeoBounds.east + selectedGeoBounds.west) / 2;
-                                map.setView([centerLat, centerLng], parseInt(actualZoom), { animate: false });
-                            } else {
-                                map.setView(selectedBounds.getCenter(), parseInt(actualZoom), { animate: false });
-                            }
-                        } else {
-                            setTimeout(res, 300);
-                        }
-                    });
+                const boundsToUse = selectedGeoBounds ? 
+                    L.latLngBounds([selectedGeoBounds.south, selectedGeoBounds.west], [selectedGeoBounds.north, selectedGeoBounds.east]) :
+                    selectedBounds;
+
+                // 计算选择区域在目标层级下的像素尺寸
+                const nwPixel = map.project(boundsToUse.getNorthWest(), finalZoom);
+                const sePixel = map.project(boundsToUse.getSouthEast(), finalZoom);
+                const totalWidth = Math.round(sePixel.x - nwPixel.x);
+                const totalHeight = Math.round(sePixel.y - nwPixel.y);
+
+                // 获取地图容器的尺寸
+                const mapContainer = map.getContainer();
+                const viewWidth = mapContainer.clientWidth;
+                const viewHeight = mapContainer.clientHeight;
+
+                // 判断是否需要分块捕获
+                const needsTiling = totalWidth > viewWidth || totalHeight > viewHeight;
+
+                // 恢复状态的辅助函数
+                const restoreState = () => {
+                    if (actualZoom !== 'current') {
+                        map.setView(originalCenter, originalZoom, { animate: false });
+                    }
+                    if (layerType && layerType !== originalLayer) {
+                        switchMapLayer(originalLayer);
+                    }
+                    if (hadSearchMarker && searchMarker) {
+                        searchMarker.addTo(map);
+                    }
                 };
 
-                prepareView().then(() => {
-                    leafletImage(map, function (err, canvas) {
-                        if (err) {
-                            console.error(err);
-                            // 恢复原始图层
-                            if (layerType && layerType !== originalLayer) {
-                                switchMapLayer(originalLayer);
+                if (!needsTiling) {
+                    // 不需要分块，直接捕获
+                    const prepareView = () => {
+                        return new Promise((res) => {
+                            if (actualZoom !== 'current') {
+                                map.once('moveend', () => setTimeout(res, 1000));
+                                const centerLat = (selectedGeoBounds.north + selectedGeoBounds.south) / 2;
+                                const centerLng = (selectedGeoBounds.east + selectedGeoBounds.west) / 2;
+                                map.setView([centerLat, centerLng], finalZoom, { animate: false });
+                            } else {
+                                setTimeout(res, 300);
                             }
-                            // 恢复搜索标记
-                            if (hadSearchMarker && searchMarker) {
-                                searchMarker.addTo(map);
+                        });
+                    };
+
+                    prepareView().then(() => {
+                        leafletImage(map, function (err, canvas) {
+                            if (err) {
+                                console.error(err);
+                                restoreState();
+                                resolve(null);
+                                return;
                             }
-                            resolve(null);
-                            return;
-                        }
 
-                        // 使用保存的地理范围计算屏幕坐标，确保所有层级使用相同的地理范围
-                        const boundsToUse = selectedGeoBounds ? 
-                            L.latLngBounds([selectedGeoBounds.south, selectedGeoBounds.west], [selectedGeoBounds.north, selectedGeoBounds.east]) :
-                            selectedBounds;
-                        
-                        const nwPoint = map.latLngToContainerPoint(boundsToUse.getNorthWest());
-                        const sePoint = map.latLngToContainerPoint(boundsToUse.getSouthEast());
+                            const nwPoint = map.latLngToContainerPoint(boundsToUse.getNorthWest());
+                            const sePoint = map.latLngToContainerPoint(boundsToUse.getSouthEast());
 
-                        let x = Math.round(nwPoint.x);
-                        let y = Math.round(nwPoint.y);
-                        let width = Math.round(sePoint.x - nwPoint.x);
-                        let height = Math.round(sePoint.y - nwPoint.y);
+                            let x = Math.round(nwPoint.x);
+                            let y = Math.round(nwPoint.y);
+                            let width = Math.round(sePoint.x - nwPoint.x);
+                            let height = Math.round(sePoint.y - nwPoint.y);
 
-                        const canvasWidth = canvas.width;
-                        const canvasHeight = canvas.height;
+                            const canvasWidth = canvas.width;
+                            const canvasHeight = canvas.height;
 
-                        if (x < 0) { width += x; x = 0; }
-                        if (y < 0) { height += y; y = 0; }
-                        width = Math.min(width, canvasWidth - x);
-                        height = Math.min(height, canvasHeight - y);
+                            if (x < 0) { width += x; x = 0; }
+                            if (y < 0) { height += y; y = 0; }
+                            width = Math.min(width, canvasWidth - x);
+                            height = Math.min(height, canvasHeight - y);
 
-                        if (width <= 0 || height <= 0) {
-                            console.error("Selection bounds out of view at this zoom level.");
-                            // 恢复原始图层
-                            if (layerType && layerType !== originalLayer) {
-                                switchMapLayer(originalLayer);
+                            if (width <= 0 || height <= 0) {
+                                console.error("Selection bounds out of view at this zoom level.");
+                                restoreState();
+                                resolve(null);
+                                return;
                             }
-                            // 恢复搜索标记
-                            if (hadSearchMarker && searchMarker) {
-                                searchMarker.addTo(map);
-                            }
-                            resolve(null);
-                            return;
-                        }
 
-                        const cropCanvas = document.createElement('canvas');
-                        cropCanvas.width = width;
-                        cropCanvas.height = height;
-                        const ctx = cropCanvas.getContext('2d');
-                        ctx.drawImage(canvas, x, y, width, height, 0, 0, width, height);
+                            const cropCanvas = document.createElement('canvas');
+                            cropCanvas.width = width;
+                            cropCanvas.height = height;
+                            const ctx = cropCanvas.getContext('2d');
+                            ctx.drawImage(canvas, x, y, width, height, 0, 0, width, height);
 
-                        const dataUrl = cropCanvas.toDataURL("image/png");
-
-                        // 恢复原始视图和图层
-                        if (actualZoom !== 'current') {
-                            map.setView(originalCenter, originalZoom, { animate: false });
-                        }
-                        if (layerType && layerType !== originalLayer) {
-                            switchMapLayer(originalLayer);
-                        }
-                        // 恢复搜索标记
-                        if (hadSearchMarker && searchMarker) {
-                            searchMarker.addTo(map);
-                        }
-                        resolve(dataUrl);
+                            const dataUrl = cropCanvas.toDataURL("image/png");
+                            restoreState();
+                            resolve(dataUrl);
+                        });
                     });
-                });
+                } else {
+                    // 需要分块捕获
+                    showStatus(`区域较大，正在分块捕获 ${currentLayerName}...`, "blue");
+                    
+                    // 计算需要多少块
+                    const tileSize = Math.min(viewWidth, viewHeight) * 0.8;
+                    const cols = Math.ceil(totalWidth / tileSize);
+                    const rows = Math.ceil(totalHeight / tileSize);
+                    
+                    // 创建最终画布
+                    const finalCanvas = document.createElement('canvas');
+                    finalCanvas.width = totalWidth;
+                    finalCanvas.height = totalHeight;
+                    const finalCtx = finalCanvas.getContext('2d');
+
+                    // 分块捕获
+                    for (let row = 0; row < rows; row++) {
+                        for (let col = 0; col < cols; col++) {
+                            // 计算当前块的地理中心
+                            const pixelX = nwPixel.x + col * tileSize + tileSize / 2;
+                            const pixelY = nwPixel.y + row * tileSize + tileSize / 2;
+                            const centerPoint = L.point(pixelX, pixelY);
+                            const centerLatLng = map.unproject(centerPoint, finalZoom);
+
+                            // 移动地图到当前块中心
+                            await new Promise((res) => {
+                                map.once('moveend', () => setTimeout(res, 800));
+                                map.setView(centerLatLng, finalZoom, { animate: false });
+                            });
+
+                            // 等待瓦片加载
+                            await new Promise(res => setTimeout(res, 500));
+
+                            // 捕获当前视图
+                            const tileCanvas = await new Promise((tileRes) => {
+                                leafletImage(map, function(err, canvas) {
+                                    if (err) {
+                                        console.error(err);
+                                        tileRes(null);
+                                        return;
+                                    }
+                                    tileRes(canvas);
+                                });
+                            });
+
+                            if (tileCanvas) {
+                                // 计算当前块在最终图像中的位置
+                                const blockNwPixel = L.point(nwPixel.x + col * tileSize, nwPixel.y + row * tileSize);
+                                const blockSePixel = L.point(
+                                    Math.min(nwPixel.x + (col + 1) * tileSize, sePixel.x),
+                                    Math.min(nwPixel.y + (row + 1) * tileSize, sePixel.y)
+                                );
+
+                                // 获取当前视图中的选择区域坐标
+                                const blockNwLatLng = map.unproject(blockNwPixel, finalZoom);
+                                const blockSeLatLng = map.unproject(blockSePixel, finalZoom);
+                                
+                                const viewNwPoint = map.latLngToContainerPoint(blockNwLatLng);
+                                const viewSePoint = map.latLngToContainerPoint(blockSeLatLng);
+
+                                // 计算源坐标和目标坐标
+                                const srcX = Math.max(0, viewNwPoint.x);
+                                const srcY = Math.max(0, viewNwPoint.y);
+                                const srcWidth = Math.min(viewSePoint.x, tileCanvas.width) - srcX;
+                                const srcHeight = Math.min(viewSePoint.y, tileCanvas.height) - srcY;
+
+                                const destX = col * tileSize;
+                                const destY = row * tileSize;
+                                const destWidth = blockSePixel.x - blockNwPixel.x;
+                                const destHeight = blockSePixel.y - blockNwPixel.y;
+
+                                if (srcWidth > 0 && srcHeight > 0) {
+                                    finalCtx.drawImage(tileCanvas, srcX, srcY, srcWidth, srcHeight, destX, destY, destWidth, destHeight);
+                                }
+                            }
+
+                            showStatus(`正在捕获 ${currentLayerName}... (${row * cols + col + 1}/${rows * cols})`, "blue");
+                        }
+                    }
+
+                    const dataUrl = finalCanvas.toDataURL("image/png");
+                    restoreState();
+                    resolve(dataUrl);
+                }
             });
         }
 
