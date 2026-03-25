@@ -495,13 +495,15 @@
 
 <!-- 底部绘制工具条 -->
 <div class="drawing-toolbar">
-    <button id="draw-point" class="btn-action">点</button>
-    <button id="draw-line" class="btn-action">线</button>
-    <button id="draw-polygon" class="btn-action">面</button>
-    <button id="draw-arrow" class="btn-action">箭头</button>
+    <button id="draw-point" class="btn-action" title="绘制点">📍 点</button>
+    <button id="draw-line" class="btn-action" title="绘制线">📏 线</button>
+    <button id="draw-polygon" class="btn-action" title="绘制多边形">🔷 面</button>
+    <button id="draw-arrow" class="btn-action" title="绘制箭头">➤ 箭头</button>
+    <div style="width: 1px; height: 24px; background: rgba(255,255,255,0.1); margin: 0 4px;"></div>
+    <button id="delete-feature" class="btn-action btn-danger" title="删除对象">🗑️ 删除</button>
     <div style="width: 1px; height: 24px; background: rgba(255,255,255,0.1); margin: 0 4px;"></div>
     <button id="calc-line-length" class="btn-action">计算长度</button>
-    <button id="draw-profile" class="btn-action">剖面图</button>
+    <button id="draw-profile" class="btn-action">剖面</button>
     <button id="clear-drawings" class="btn-action btn-danger">清除绘制</button>
     <div style="width: 1px; height: 24px; background: rgba(255,255,255,0.1); margin: 0 4px;"></div>
     <label class="btn-action cursor-pointer" title="导入JSON或SHP文件">
@@ -1203,6 +1205,7 @@
         document.getElementById('draw-line').addEventListener('click', () => setDrawingMode('line'));
         document.getElementById('draw-polygon').addEventListener('click', () => setDrawingMode('polygon'));
         document.getElementById('draw-arrow').addEventListener('click', () => setDrawingMode('arrow'));
+        document.getElementById('delete-feature').addEventListener('click', toggleDeleteMode);
         document.getElementById('clear-drawings').addEventListener('click', clearDrawings);
         document.getElementById('calc-line-length').addEventListener('click', calculateLineLengths);
         document.getElementById('draw-profile').addEventListener('click', generateProfile);
@@ -5022,11 +5025,12 @@
         controls.update();
         
         // 更新标记大小，使其随相机距离自动缩放
+        const cameraDistance = camera.position.distanceTo(controls.target);
+        const baseScale = 1.0;
+        const scaleFactor = cameraDistance / 200;
+        
+        // 更新地点标记
         if (window.markerGroup && window.markerGroup.children.length > 0) {
-            const cameraDistance = camera.position.distanceTo(controls.target);
-            const baseScale = 1.0;
-            const scaleFactor = cameraDistance / 200;
-            
             window.markerGroup.children.forEach((child) => {
                 // 标记点（球体）
                 if (child.geometry && child.geometry.type === 'SphereGeometry') {
@@ -5036,6 +5040,35 @@
                 else if (child.material && child.material.map) {
                     child.scale.set(15 * scaleFactor, 5.6 * scaleFactor, 1);
                 }
+            });
+        }
+        
+        // 更新绘图要素（点、线、面）的标签大小
+        if (drawingsGroup && drawingsGroup.children.length > 0) {
+            drawingsGroup.children.forEach((drawing) => {
+                // 遍历绘图对象中的所有子对象
+                drawing.children.forEach((child) => {
+                    // 标签是 Sprite 类型
+                    if (child instanceof THREE.Sprite) {
+                        // 获取原始尺寸（存储在 userData 中）
+                        if (!child.userData.baseScaleX) {
+                            child.userData.baseScaleX = child.scale.x;
+                            child.userData.baseScaleY = child.scale.y;
+                        }
+                        child.scale.set(
+                            child.userData.baseScaleX * scaleFactor,
+                            child.userData.baseScaleY * scaleFactor,
+                            1
+                        );
+                    }
+                    // 点标记（球体）
+                    else if (child.geometry && child.geometry.type === 'SphereGeometry') {
+                        if (!child.userData.baseScale) {
+                            child.userData.baseScale = child.scale.x;
+                        }
+                        child.scale.setScalar(child.userData.baseScale * scaleFactor);
+                    }
+                });
             });
         }
         
@@ -5120,6 +5153,12 @@
     }
 
     function setDrawingMode(mode) {
+        // 如果当前是删除模式，先关闭删除模式
+        if (isDeleteMode) {
+            isDeleteMode = false;
+            document.getElementById('delete-feature').classList.remove('active');
+        }
+        
         if (drawingMode === mode) {
             drawingMode = null;
             document.querySelectorAll('#draw-point, #draw-line, #draw-polygon, #draw-arrow').forEach(btn => btn.classList.remove('active'));
@@ -5146,6 +5185,67 @@
             drawingsGroup.remove(tempPreviewMarker);
             tempPreviewMarker = null;
         }
+    }
+    
+    // 删除模式状态
+    let isDeleteMode = false;
+    
+    // 切换删除模式
+    function toggleDeleteMode() {
+        isDeleteMode = !isDeleteMode;
+        const deleteBtn = document.getElementById('delete-feature');
+        
+        if (isDeleteMode) {
+            // 关闭绘制模式
+            drawingMode = null;
+            document.querySelectorAll('#draw-point, #draw-line, #draw-polygon, #draw-arrow').forEach(btn => btn.classList.remove('active'));
+            deleteBtn.classList.add('active');
+            
+            // 清除绘制状态
+            isDrawing = false;
+            drawingPoints = [];
+            if (currentDrawing) {
+                drawingsGroup.remove(currentDrawing);
+                currentDrawing = null;
+            }
+            if (previewLine) {
+                drawingsGroup.remove(previewLine);
+                previewLine = null;
+            }
+            previewPointMarkers.forEach(marker => {
+                drawingsGroup.remove(marker);
+            });
+            previewPointMarkers = [];
+            if (tempPreviewMarker) {
+                drawingsGroup.remove(tempPreviewMarker);
+                tempPreviewMarker = null;
+            }
+            
+            // 更改鼠标样式
+            renderer.domElement.style.cursor = 'crosshair';
+        } else {
+            deleteBtn.classList.remove('active');
+            renderer.domElement.style.cursor = 'default';
+        }
+    }
+    
+    // 删除选中的要素
+    function deleteFeature(feature) {
+        if (!feature) return;
+        
+        // 从场景中移除
+        drawingsGroup.remove(feature);
+        
+        // 从drawingFeatures数组中移除
+        const featureId = feature.userData?.featureId;
+        if (featureId) {
+            const index = drawingFeatures.findIndex(f => f.featureId === featureId);
+            if (index !== -1) {
+                drawingFeatures.splice(index, 1);
+            }
+        }
+        
+        console.log('已删除要素:', feature.userData?.name || '未命名');
     }
 
     function clearDrawings() {
@@ -5228,6 +5328,33 @@
     }
 
     function onDrawingClick(event) {
+        // 处理删除模式
+        if (isDeleteMode) {
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+            
+            raycaster.setFromCamera(mouse, camera);
+            
+            // 检测是否点击了 drawingsGroup 中的要素
+            const intersects = raycaster.intersectObjects(drawingsGroup.children, true);
+            
+            if (intersects.length > 0) {
+                // 找到被点击的要素（可能是子对象，需要向上查找到父级要素）
+                let clickedObject = intersects[0].object;
+                
+                // 向上查找到包含 featureId 的父对象
+                while (clickedObject && !clickedObject.userData?.featureId && clickedObject.parent) {
+                    clickedObject = clickedObject.parent;
+                }
+                
+                // 如果找到了有效的要素
+                if (clickedObject && clickedObject.userData?.featureId) {
+                    deleteFeature(clickedObject);
+                }
+            }
+            return;
+        }
+        
         if (!drawingMode) return;
         
         const currentTime = Date.now();
