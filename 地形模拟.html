@@ -444,6 +444,11 @@
                 🎨 导出分层设色
             </button>
         </div>
+        <div class="flex gap-2 mt-2">
+            <button id="save-zip" class="btn-action flex-1" title="保存当前打开的导入的ZIP文件">
+                📦 保存ZIP文件
+            </button>
+        </div>
 
         <div class="section-title">太阳位置计算</div>
         <div class="space-y-3">
@@ -640,6 +645,10 @@
     let drawingFeatures = [];
     let pendingFeature = null; // 等待命名的要素
     let pendingFeatureCallback = null; // 命名完成后的回调
+    
+    // 存储当前打开的ZIP文件
+    let currentZipFile = null;
+    let currentZipData = null;
     
     const paletteData = [
         { name: '经典地理', colors: [0x051a10, 0x14311c, 0x2a4d31, 0x4d5d3d, 0x7b6d4e, 0xa38c6d, 0xd4c0a1, 0xffffff] },
@@ -1228,6 +1237,7 @@
         // 导出功能
         document.getElementById('export-contours').addEventListener('click', exportContours);
         document.getElementById('export-hypsometric').addEventListener('click', exportHypsometric);
+        document.getElementById('save-zip').addEventListener('click', saveCurrentZip);
         // 前往下载页面
         document.getElementById('goto-download').addEventListener('click', () => {
             window.location.href = 'Download.html';
@@ -2256,6 +2266,10 @@
             showImportStatus('正在解析ZIP文件...');
             const zip = await JSZip.loadAsync(file);
             const files = [];
+            
+            // 保存当前ZIP文件信息
+            currentZipFile = file;
+            currentZipData = zip;
             
             // 提取所有文件
             const promises = [];
@@ -4810,6 +4824,40 @@
         URL.revokeObjectURL(link.href);
 
         showImportStatus('分层设色地形图导出完成！');
+    }
+
+    // 保存当前打开的导入的ZIP文件
+    async function saveCurrentZip() {
+        if (!currentZipData) {
+            alert('当前没有打开的ZIP文件，请先导入ZIP文件');
+            return;
+        }
+
+        try {
+            showImportStatus('正在保存ZIP文件...');
+
+            // 生成ZIP文件
+            const content = await currentZipData.generateAsync({ type: 'blob' });
+
+            // 创建下载链接
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(content);
+            
+            // 使用原始文件名或默认名称
+            const fileName = currentZipFile ? currentZipFile.name : 'terrain_data.zip';
+            link.download = fileName;
+            
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(link.href);
+
+            showImportStatus('ZIP文件保存完成！');
+        } catch (err) {
+            console.error('保存ZIP文件失败:', err);
+            showImportStatus('保存ZIP文件失败', true);
+            alert('保存ZIP文件失败: ' + err.message);
+        }
     }
 
     // Marching Squares算法（参考gd copy.html）
