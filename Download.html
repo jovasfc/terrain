@@ -221,6 +221,10 @@
                         </button>
                     </div>
                     
+                    <button id="save-zip-btn" class="w-full mt-2 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-xl font-bold transition shadow-lg shadow-orange-200 disabled:opacity-50 disabled:cursor-not-allowed hidden">
+                        💾 保存已下载的ZIP文件
+                    </button>
+                    
                     <div id="status-msg" class="text-xs mt-2 hidden break-words font-medium"></div>
 
                     <div class="pt-3 mt-3 border-t border-slate-100">
@@ -360,6 +364,7 @@
         const mapLayerSelect = document.getElementById('map-layer-select');
         const downloadBtn = document.getElementById('download-btn');
         const downloadOpenBtn = document.getElementById('download-open-btn');
+        const saveZipBtn = document.getElementById('save-zip-btn');
         const statusMsg = document.getElementById('status-msg');
         const sizeEstimate = document.getElementById('size-estimate');
         const overlay = document.getElementById('processing-overlay');
@@ -494,6 +499,20 @@
             attribution: 'Esri Satellite',
             crossOrigin: true 
         }).addTo(map);
+
+        // 检查是否有已下载的ZIP文件
+        (async () => {
+            try {
+                const zipData = await loadZipFromIndexedDB();
+                if (zipData && zipData.blob) {
+                    saveZipBtn.classList.remove('hidden');
+                    saveZipBtn.disabled = false;
+                    showStatus("检测到已下载的ZIP文件，可以点击下方按钮保存", "blue");
+                }
+            } catch (err) {
+                console.log("检查已下载ZIP文件时出错:", err);
+            }
+        })();
 
         // 添加比例尺
         L.control.scale({ imperial: false, metric: true, position: 'bottomleft' }).addTo(map);
@@ -1826,7 +1845,7 @@
                     
                     const handleConfirm = async () => {
                         // 在用户点击确认时立即打开新窗口（必须在用户点击事件中同步执行）
-                        const newWindow = window.open('地形模拟.html?autoLoad=pending', '_blank');
+                        const newWindow = window.open('地形模拟 9图层版自动打开.html?autoLoad=pending', '_blank');
                         
                         modal.classList.add('hidden');
                         confirmBtn.removeEventListener('click', handleConfirm);
@@ -1848,7 +1867,7 @@
                 });
             } else {
                 // 不需要选择图层，直接打开新窗口
-                const newWindow = window.open('地形模拟.html?autoLoad=pending', '_blank');
+                const newWindow = window.open('地形模拟 9图层版自动打开.html?autoLoad=pending', '_blank');
                 await performDownloadAndOpen(key, baseFilename, w, s, e, n, demType, url, newWindow);
             }
         };
@@ -1982,7 +2001,11 @@
                 // 设置就绪标志
                 localStorage.setItem('terrainZipReady', Date.now().toString());
 
-                showStatus("处理完成！", "green");
+                // 显示保存按钮
+                saveZipBtn.classList.remove('hidden');
+                saveZipBtn.disabled = false;
+
+                showStatus("处理完成！您可以查看新网页，如果满意可以点击下方按钮保存ZIP文件", "green");
 
             } catch (err) {
                 showStatus("错误: " + err.message, "red");
@@ -2008,6 +2031,17 @@
             });
         }
 
+        async function loadZipFromIndexedDB() {
+            const db = await openDatabase();
+            return new Promise((resolve, reject) => {
+                const transaction = db.transaction(['zipFiles'], 'readonly');
+                const store = transaction.objectStore('zipFiles');
+                const request = store.get('latestZip');
+                request.onerror = () => reject(request.error);
+                request.onsuccess = () => resolve(request.result);
+            });
+        }
+
         async function saveZipToIndexedDB(blob, filename) {
             const db = await openDatabase();
             return new Promise((resolve, reject) => {
@@ -2018,6 +2052,34 @@
                 request.onsuccess = () => resolve();
             });
         }
+
+        // 保存已下载的ZIP文件按钮事件
+        saveZipBtn.onclick = async () => {
+            try {
+                showStatus("正在准备下载...", "blue");
+                
+                const zipData = await loadZipFromIndexedDB();
+                if (!zipData || !zipData.blob) {
+                    showStatus("没有找到已下载的ZIP文件", "red");
+                    return;
+                }
+
+                // 创建下载链接
+                const url = window.URL.createObjectURL(zipData.blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = zipData.filename || 'terrain_data.zip';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                window.URL.revokeObjectURL(url);
+
+                showStatus("ZIP文件已保存！", "green");
+            } catch (err) {
+                showStatus("保存失败: " + err.message, "red");
+                console.error(err);
+            }
+        };
 
         function showStatus(msg, color) {
             statusMsg.innerText = msg;
