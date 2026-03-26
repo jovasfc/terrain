@@ -445,6 +445,11 @@
             </button>
         </div>
         <div class="flex gap-2 mt-2">
+            <button id="export-3d" class="btn-action flex-1" title="导出3D模型为OBJ格式">
+                🎮 导出3D模型
+            </button>
+        </div>
+        <div class="flex gap-2 mt-2">
             <button id="save-zip" class="btn-action flex-1" title="将当前打开的所有数据打包为ZIP文件保存">
                 📦 保存数据为ZIP
             </button>
@@ -1233,6 +1238,7 @@
         // 导出功能
         document.getElementById('export-contours').addEventListener('click', exportContours);
         document.getElementById('export-hypsometric').addEventListener('click', exportHypsometric);
+        document.getElementById('export-3d').addEventListener('click', export3DModel);
         document.getElementById('save-zip').addEventListener('click', saveCurrentZip);
         // 前往下载页面
         document.getElementById('goto-download').addEventListener('click', () => {
@@ -4816,6 +4822,96 @@
         URL.revokeObjectURL(link.href);
 
         showImportStatus('分层设色地形图导出完成！');
+    }
+
+    // 导出3D模型为OBJ格式
+    async function export3DModel() {
+        if (!terrainGroup || terrainGroup.children.length === 0) {
+            alert('请先导入地形数据');
+            return;
+        }
+
+        try {
+            showImportStatus('正在导出3D模型...');
+
+            const now = new Date();
+            const timestamp = `${now.getFullYear()}${(now.getMonth()+1).toString().padStart(2,'0')}${now.getDate().toString().padStart(2,'0')}${now.getHours().toString().padStart(2,'0')}${now.getMinutes().toString().padStart(2,'0')}`;
+
+            let objContent = '';
+            let mtlContent = '';
+            let vertexOffset = 1;
+            let textureFiles = [];
+
+            // 遍历地形组中的所有网格
+            terrainGroup.children.forEach(child => {
+                if (child instanceof THREE.Mesh && child.geometry) {
+                    const geometry = child.geometry;
+                    const material = child.material;
+
+                    // 获取位置数据
+                    const positions = geometry.attributes.position.array;
+                    const normals = geometry.attributes.normal ? geometry.attributes.normal.array : null;
+                    const uvs = geometry.attributes.uv ? geometry.attributes.uv.array : null;
+
+                    // 写入顶点
+                    for (let i = 0; i < positions.length; i += 3) {
+                        objContent += `v ${positions[i].toFixed(6)} ${positions[i + 1].toFixed(6)} ${positions[i + 2].toFixed(6)}\n`;
+                    }
+
+                    // 写入法线
+                    if (normals) {
+                        for (let i = 0; i < normals.length; i += 3) {
+                            objContent += `vn ${normals[i].toFixed(6)} ${normals[i + 1].toFixed(6)} ${normals[i + 2].toFixed(6)}\n`;
+                        }
+                    }
+
+                    // 写入UV坐标
+                    if (uvs) {
+                        for (let i = 0; i < uvs.length; i += 2) {
+                            objContent += `vt ${uvs[i].toFixed(6)} ${(1 - uvs[i + 1]).toFixed(6)}\n`;
+                        }
+                    }
+
+                    // 写入面
+                    if (geometry.index) {
+                        const indices = geometry.index.array;
+                        for (let i = 0; i < indices.length; i += 3) {
+                            const a = indices[i] + vertexOffset;
+                            const b = indices[i + 1] + vertexOffset;
+                            const c = indices[i + 2] + vertexOffset;
+                            objContent += `f ${a}/${a}/${a} ${b}/${b}/${b} ${c}/${c}/${c}\n`;
+                        }
+                    } else {
+                        const vertexCount = positions.length / 3;
+                        for (let i = 0; i < vertexCount; i += 3) {
+                            const a = i + vertexOffset;
+                            const b = i + 1 + vertexOffset;
+                            const c = i + 2 + vertexOffset;
+                            objContent += `f ${a}/${a}/${a} ${b}/${b}/${b} ${c}/${c}/${c}\n`;
+                        }
+                    }
+
+                    vertexOffset += positions.length / 3;
+                }
+            });
+
+            // 创建OBJ文件
+            const objBlob = new Blob([objContent], { type: 'text/plain' });
+            const objUrl = URL.createObjectURL(objBlob);
+            const objLink = document.createElement('a');
+            objLink.href = objUrl;
+            objLink.download = `terrain_3d_model_${timestamp}.obj`;
+            document.body.appendChild(objLink);
+            objLink.click();
+            document.body.removeChild(objLink);
+            URL.revokeObjectURL(objUrl);
+
+            showImportStatus('3D模型导出完成！');
+        } catch (err) {
+            console.error('导出3D模型失败:', err);
+            showImportStatus('导出3D模型失败', true);
+            alert('导出3D模型失败: ' + err.message);
+        }
     }
 
     // 保存当前打开的数据为ZIP文件
