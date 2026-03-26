@@ -498,14 +498,14 @@
     <button id="draw-point" class="btn-action" title="绘制点">📍 点</button>
     <button id="draw-line" class="btn-action" title="绘制线">📏 线</button>
     <button id="draw-polygon" class="btn-action" title="绘制多边形">🔷 面</button>
-    <button id="draw-arrow" class="btn-action" title="绘制箭头">➤ 箭头</button>
+    <button id="draw-arrow" class="btn-action" title="绘制箭头">➤ 箭</button>
+    <button id="delete-feature" class="btn-action btn-danger" title="删除对象">🗑️ 删</button>
     <div style="width: 1px; height: 24px; background: rgba(255,255,255,0.1); margin: 0 4px;"></div>
-    <button id="delete-feature" class="btn-action btn-danger" title="删除对象">🗑️ 删除</button>
+    <button id="calc-line-length" class="btn-action" title="计算长度">📐 计算</button>
+    <button id="draw-profile" class="btn-action" title="剖面图">📈 剖面</button>
+    <button id="clear-drawings" class="btn-action btn-danger" title="清除绘制">🧹 清除</button>
     <div style="width: 1px; height: 24px; background: rgba(255,255,255,0.1); margin: 0 4px;"></div>
-    <button id="calc-line-length" class="btn-action">计算长度</button>
-    <button id="draw-profile" class="btn-action">剖面</button>
-    <button id="clear-drawings" class="btn-action btn-danger">清除绘制</button>
-    <div style="width: 1px; height: 24px; background: rgba(255,255,255,0.1); margin: 0 4px;"></div>
+    <button id="export-render" class="btn-action" title="导出渲染图">📷 渲染</button>
     <label class="btn-action cursor-pointer" title="导入JSON或SHP文件">
         📥 导入
         <input type="file" id="import-file-input" accept=".json,.shp" class="hidden">
@@ -525,6 +525,46 @@
             </button>
             <button id="confirm-name" class="flex-1 py-2 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition text-sm">
                 确认
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- 导出渲染图对话框 -->
+<div id="export-render-dialog" class="fixed inset-0 bg-black/50 z-[10001] hidden flex items-center justify-center">
+    <div class="bg-[#1a1a1d] rounded-2xl shadow-2xl p-6 max-w-sm w-full mx-4 border border-white/10">
+        <h3 class="text-lg font-bold text-white mb-4">导出渲染图</h3>
+        
+        <div class="mb-4">
+            <label class="text-xs text-slate-400 mb-2 block">分辨率预设</label>
+            <select id="resolution-preset" class="w-full px-3 py-2 bg-[#27272a] border border-[#3f3f46] rounded-lg text-white text-sm outline-none focus:border-blue-500 mb-3">
+                <option value="1920x1080">1920 x 1080 (Full HD)</option>
+                <option value="2560x1440">2560 x 1440 (2K)</option>
+                <option value="3840x2160">3840 x 2160 (4K)</option>
+                <option value="7680x4320">7680 x 4320 (8K)</option>
+                <option value="custom">自定义</option>
+            </select>
+        </div>
+        
+        <div class="grid grid-cols-2 gap-3 mb-4">
+            <div>
+                <label class="text-xs text-slate-400 mb-2 block">宽度</label>
+                <input type="number" id="render-width" value="1920" min="100" max="16384"
+                       class="w-full px-3 py-2 bg-[#27272a] border border-[#3f3f46] rounded-lg text-white text-sm outline-none focus:border-blue-500">
+            </div>
+            <div>
+                <label class="text-xs text-slate-400 mb-2 block">高度</label>
+                <input type="number" id="render-height" value="1080" min="100" max="16384"
+                       class="w-full px-3 py-2 bg-[#27272a] border border-[#3f3f46] rounded-lg text-white text-sm outline-none focus:border-blue-500">
+            </div>
+        </div>
+        
+        <div class="flex gap-3">
+            <button id="cancel-export-render" class="flex-1 py-2 px-4 bg-[#3f3f46] hover:bg-[#52525b] text-white rounded-lg font-medium transition text-sm">
+                取消
+            </button>
+            <button id="confirm-export-render" class="flex-1 py-2 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition text-sm">
+                导出
             </button>
         </div>
     </div>
@@ -557,14 +597,17 @@
 </div>
 
 <!-- 剖面图面板 -->
-<div class="panel palette-panel" id="profile-panel" style="display: none; top: 20px; right: 320px; width: 400px;">
+<div class="panel palette-panel" id="profile-panel" style="display: none; top: 20px; right: 320px; width: 450px;">
     <div class="panel-header" style="cursor: move;">
         <div class="section-title !m-0" onclick="togglePanel('profile-panel')">地形剖面图</div>
         <button onclick="document.getElementById('profile-panel').style.display='none'" class="text-slate-400 hover:text-white text-lg leading-none">&times;</button>
     </div>
     <div class="panel-content">
-        <canvas id="profile-canvas" width="350" height="250" style="background: #1f2937; border-radius: 8px; width: 100%;"></canvas>
+        <canvas id="profile-canvas" width="700" height="500" style="background: #1f2937; border-radius: 8px; width: 100%;"></canvas>
         <div id="profile-info" class="mt-3 text-xs text-slate-400"></div>
+        <button id="save-profile" class="mt-3 w-full py-2 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition text-sm">
+            💾 保存剖面图
+        </button>
     </div>
 </div>
 
@@ -1214,10 +1257,19 @@
         // 导入导出事件
         document.getElementById('import-file-input').addEventListener('change', handleFileImport);
         document.getElementById('export-geojson').addEventListener('click', exportGeoJSON);
+        document.getElementById('export-render').addEventListener('click', showExportRenderDialog);
         
         // 命名对话框事件
         document.getElementById('confirm-name').addEventListener('click', confirmFeatureName);
         document.getElementById('cancel-name').addEventListener('click', cancelFeatureName);
+        
+        // 导出渲染图对话框事件
+        document.getElementById('resolution-preset').addEventListener('change', updateResolutionFromPreset);
+        document.getElementById('cancel-export-render').addEventListener('click', hideExportRenderDialog);
+        document.getElementById('confirm-export-render').addEventListener('click', exportRenderedImage);
+        
+        // 保存剖面图事件
+        document.getElementById('save-profile').addEventListener('click', saveProfileImage);
         
         // 绘制鼠标事件
         renderer.domElement.addEventListener('mousedown', onDrawingMouseDown);
@@ -5934,7 +5986,7 @@
         
         const width = canvas.width;
         const height = canvas.height;
-        const padding = { top: 30, right: 20, bottom: 40, left: 50 };
+        const padding = { top: 40, right: 30, bottom: 60, left: 70 };
         const chartWidth = width - padding.left - padding.right;
         const chartHeight = height - padding.top - padding.bottom;
 
@@ -5962,9 +6014,9 @@
             
             const elev = maxElev + elevPadding - ((elevRange + elevPadding * 2) / 5) * i;
             ctx.fillStyle = '#9ca3af';
-            ctx.font = '10px sans-serif';
+            ctx.font = '20px sans-serif';
             ctx.textAlign = 'right';
-            ctx.fillText(elev.toFixed(0) + 'm', padding.left - 5, y + 3);
+            ctx.fillText(elev.toFixed(0) + 'm', padding.left - 10, y + 6);
         }
 
         for (let i = 0; i <= 5; i++) {
@@ -5976,9 +6028,9 @@
             
             const dist = (maxDist / 5) * i;
             ctx.fillStyle = '#9ca3af';
-            ctx.font = '10px sans-serif';
+            ctx.font = '20px sans-serif';
             ctx.textAlign = 'center';
-            ctx.fillText(dist.toFixed(0) + 'm', x, height - padding.bottom + 15);
+            ctx.fillText(dist.toFixed(0) + 'm', x, height - padding.bottom + 25);
         }
 
         const gradient = ctx.createLinearGradient(0, padding.top, 0, height - padding.bottom);
@@ -6021,16 +6073,16 @@
         ctx.stroke();
 
         ctx.fillStyle = '#e5e7eb';
-        ctx.font = 'bold 12px sans-serif';
+        ctx.font = 'bold 25px sans-serif';
         ctx.textAlign = 'center';
-        ctx.fillText('地形剖面图', width / 2, 18);
+        ctx.fillText('地形剖面图', width / 2, 28);
         
-        ctx.font = '10px sans-serif';
+        ctx.font = '20px sans-serif';
         ctx.fillStyle = '#9ca3af';
-        ctx.fillText('距离 (m)', width / 2, height - 5);
+        ctx.fillText('距离 (m)', width / 2, height - 10);
         
         ctx.save();
-        ctx.translate(12, height / 2);
+        ctx.translate(15, height / 2);
         ctx.rotate(-Math.PI / 2);
         ctx.fillText('高程 (m)', 0, 0);
         ctx.restore();
@@ -6060,6 +6112,21 @@
                 <div><span class="text-slate-500">累计下降:</span> <span class="text-cyan-400">${elevLoss.toFixed(1)} m</span></div>
             </div>
         `;
+    }
+    
+    // 保存剖面图为图片
+    function saveProfileImage() {
+        const canvas = document.getElementById('profile-canvas');
+        const dataURL = canvas.toDataURL('image/png');
+        
+        const link = document.createElement('a');
+        link.download = 'profile_' + new Date().getTime() + '.png';
+        link.href = dataURL;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        console.log('剖面图已保存');
     }
 
     function showFlowLines() {
@@ -6756,6 +6823,85 @@
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
+    }
+    
+    // 显示导出渲染图对话框
+    function showExportRenderDialog() {
+        document.getElementById('export-render-dialog').classList.remove('hidden');
+    }
+    
+    // 隐藏导出渲染图对话框
+    function hideExportRenderDialog() {
+        document.getElementById('export-render-dialog').classList.add('hidden');
+    }
+    
+    // 根据预设更新分辨率
+    function updateResolutionFromPreset() {
+        const preset = document.getElementById('resolution-preset').value;
+        const widthInput = document.getElementById('render-width');
+        const heightInput = document.getElementById('render-height');
+        
+        if (preset !== 'custom') {
+            const [width, height] = preset.split('x').map(Number);
+            widthInput.value = width;
+            heightInput.value = height;
+        }
+    }
+    
+    // 导出渲染图像
+    function exportRenderedImage() {
+        const width = parseInt(document.getElementById('render-width').value);
+        const height = parseInt(document.getElementById('render-height').value);
+        
+        if (isNaN(width) || isNaN(height) || width < 100 || height < 100) {
+            alert('请输入有效的分辨率（最小 100x100）');
+            return;
+        }
+        
+        if (width > 16384 || height > 16384) {
+            alert('分辨率过大，最大支持 16384x16384');
+            return;
+        }
+        
+        hideExportRenderDialog();
+        
+        // 保存原始渲染器尺寸
+        const originalWidth = renderer.domElement.width;
+        const originalHeight = renderer.domElement.height;
+        const originalPixelRatio = renderer.getPixelRatio();
+        
+        // 设置新的渲染尺寸
+        renderer.setSize(width, height);
+        renderer.setPixelRatio(1);
+        
+        // 更新相机宽高比
+        camera.aspect = width / height;
+        camera.updateProjectionMatrix();
+        
+        // 渲染一帧
+        renderer.render(scene, camera);
+        
+        // 获取图像数据
+        const canvas = renderer.domElement;
+        const dataURL = canvas.toDataURL('image/png');
+        
+        // 恢复原始渲染器尺寸
+        renderer.setSize(originalWidth, originalHeight);
+        renderer.setPixelRatio(originalPixelRatio);
+        
+        // 恢复相机宽高比
+        camera.aspect = originalWidth / originalHeight;
+        camera.updateProjectionMatrix();
+        
+        // 下载图像
+        const link = document.createElement('a');
+        link.download = 'render_' + width + 'x' + height + '_' + new Date().getTime() + '.png';
+        link.href = dataURL;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        console.log('导出渲染图:', width, 'x', height);
     }
     
 </script>
