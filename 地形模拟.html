@@ -445,8 +445,8 @@
             </button>
         </div>
         <div class="flex gap-2 mt-2">
-            <button id="save-zip" class="btn-action flex-1" title="保存当前打开的导入的ZIP文件">
-                📦 保存ZIP文件
+            <button id="save-zip" class="btn-action flex-1" title="将当前打开的所有数据打包为ZIP文件保存">
+                📦 保存数据为ZIP
             </button>
         </div>
 
@@ -645,10 +645,6 @@
     let drawingFeatures = [];
     let pendingFeature = null; // 等待命名的要素
     let pendingFeatureCallback = null; // 命名完成后的回调
-    
-    // 存储当前打开的ZIP文件
-    let currentZipFile = null;
-    let currentZipData = null;
     
     const paletteData = [
         { name: '经典地理', colors: [0x051a10, 0x14311c, 0x2a4d31, 0x4d5d3d, 0x7b6d4e, 0xa38c6d, 0xd4c0a1, 0xffffff] },
@@ -2266,10 +2262,6 @@
             showImportStatus('正在解析ZIP文件...');
             const zip = await JSZip.loadAsync(file);
             const files = [];
-            
-            // 保存当前ZIP文件信息
-            currentZipFile = file;
-            currentZipData = zip;
             
             // 提取所有文件
             const promises = [];
@@ -4826,37 +4818,136 @@
         showImportStatus('分层设色地形图导出完成！');
     }
 
-    // 保存当前打开的导入的ZIP文件
+    // 保存当前打开的数据为ZIP文件
     async function saveCurrentZip() {
-        if (!currentZipData) {
-            alert('当前没有打开的ZIP文件，请先导入ZIP文件');
+        if (!heightData) {
+            alert('当前没有打开的数据，请先导入数据');
             return;
         }
 
         try {
-            showImportStatus('正在保存ZIP文件...');
+            showImportStatus('正在打包数据为ZIP文件...');
+
+            const zip = new JSZip();
+            const now = new Date();
+            const timestamp = `${now.getFullYear()}${(now.getMonth()+1).toString().padStart(2,'0')}${now.getDate().toString().padStart(2,'0')}${now.getHours().toString().padStart(2,'0')}${now.getMinutes().toString().padStart(2,'0')}`;
+
+            // 1. 保存高度图为PNG（dem.png）
+            const heightCanvas = document.createElement('canvas');
+            heightCanvas.width = rawWidth;
+            heightCanvas.height = rawHeight;
+            const heightCtx = heightCanvas.getContext('2d');
+            const heightImageData = heightCtx.createImageData(rawWidth, rawHeight);
+            
+            for (let i = 0; i < heightData.length; i++) {
+                const value = Math.floor(heightData[i]);
+                heightImageData.data[i * 4] = value;
+                heightImageData.data[i * 4 + 1] = value;
+                heightImageData.data[i * 4 + 2] = value;
+                heightImageData.data[i * 4 + 3] = 255;
+            }
+            heightCtx.putImageData(heightImageData, 0, 0);
+            
+            const heightPngBase64 = heightCanvas.toDataURL('image/png').split(',')[1];
+            zip.file('dem.png', heightPngBase64, { base64: true });
+
+            // 2. 保存DEM信息为文本文件（dem.txt）
+            let demTextContent = '';
+            if (window.demInfo) {
+                demTextContent += `北纬: ${window.demInfo.north}\n`;
+                demTextContent += `南纬: ${window.demInfo.south}\n`;
+                demTextContent += `东经: ${window.demInfo.east}\n`;
+                demTextContent += `西经: ${window.demInfo.west}\n`;
+                demTextContent += `图像尺寸: ${window.demInfo.width} x ${window.demInfo.height}\n`;
+                demTextContent += `最高点: ${window.demInfo.max}\n`;
+                demTextContent += `最低点: ${window.demInfo.min}\n`;
+                demTextContent += `高程范围: ${window.demInfo.elevationRange}\n`;
+            } else {
+                // 如果没有DEM信息，生成基本信息
+                let minElev = Infinity, maxElev = -Infinity;
+                for (let i = 0; i < heightData.length; i++) {
+                    minElev = Math.min(minElev, heightData[i]);
+                    maxElev = Math.max(maxElev, heightData[i]);
+                }
+                demTextContent += `图像尺寸: ${rawWidth} x ${rawHeight}\n`;
+                demTextContent += `最高点: ${maxElev}\n`;
+                demTextContent += `最低点: ${minElev}\n`;
+                demTextContent += `高程范围: ${maxElev - minElev}\n`;
+            }
+            zip.file('dem.txt', demTextContent);
+
+            // 3. 保存当前纹理为PNG（sat.png）
+            if (customTexture && customTexture.image) {
+                const textureCanvas = document.createElement('canvas');
+                textureCanvas.width = customTexture.image.width;
+                textureCanvas.height = customTexture.image.height;
+                const textureCtx = textureCanvas.getContext('2d');
+                textureCtx.drawImage(customTexture.image, 0, 0);
+                
+                const texturePngBase64 = textureCanvas.toDataURL('image/png').split(',')[1];
+                zip.file('sat.png', texturePngBase64, { base64: true });
+            }
+
+            // 4. 保存绘图要素为JSON文件
+            if (drawingFeatures.length > 0) {
+                const geoJson = {
+                    type: 'FeatureCollection',
+                    features: drawingFeatures.map(feature => ({
+                        type: 'Feature',
+                        properties: {
+                            name: feature.name,
+                            type: feature.type,
+                            ...feature.properties
+                        },
+                        geometry: {
+                            type: feature.geometryType,
+                            coordinates: feature.coordinates
+                        }
+                    }))
+                };
+                zip.file('drawings.json', JSON.stringify(geoJson, null, 2));
+            }
+
+            // 5. 保存当前渲染设置
+            const settings = {
+                detailScale: document.getElementById('detail-scale').value,
+                heightScale: document.getElementById('height-scale').value,
+                skirtDepth: document.getElementById('skirt-depth').value,
+                contourToggle: document.getElementById('contour-toggle').checked,
+                contourLabelsToggle: document.getElementById('contour-labels-toggle').checked,
+                contourSpacing: document.getElementById('contour-spacing').value,
+                contourWidth: document.getElementById('contour-width').value,
+                renderModeToggle: document.getElementById('render-mode-toggle').checked,
+                removePaletteToggle: document.getElementById('remove-palette-toggle').checked,
+                baseColor: document.getElementById('base-color').value,
+                contourColor: document.getElementById('contour-color').value,
+                showTextureToggle: document.getElementById('show-texture-toggle').checked,
+                textureOpacity: document.getElementById('texture-opacity').value,
+                ambientIntensity: document.getElementById('ambient-intensity').value,
+                sunIntensity: document.getElementById('sun-intensity').value,
+                sunElevation: document.getElementById('sun-elevation').value,
+                sunAzimuth: document.getElementById('sun-azimuth').value
+            };
+            zip.file('settings.json', JSON.stringify(settings, null, 2));
 
             // 生成ZIP文件
-            const content = await currentZipData.generateAsync({ type: 'blob' });
+            const content = await zip.generateAsync({ type: 'blob' });
 
             // 创建下载链接
             const link = document.createElement('a');
             link.href = URL.createObjectURL(content);
-            
-            // 使用原始文件名或默认名称
-            const fileName = currentZipFile ? currentZipFile.name : 'terrain_data.zip';
-            link.download = fileName;
+            link.download = `terrain_data_${timestamp}.zip`;
             
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
             URL.revokeObjectURL(link.href);
 
-            showImportStatus('ZIP文件保存完成！');
+            showImportStatus('数据打包完成！');
         } catch (err) {
-            console.error('保存ZIP文件失败:', err);
-            showImportStatus('保存ZIP文件失败', true);
-            alert('保存ZIP文件失败: ' + err.message);
+            console.error('打包ZIP文件失败:', err);
+            showImportStatus('打包ZIP文件失败', true);
+            alert('打包ZIP文件失败: ' + err.message);
         }
     }
 
