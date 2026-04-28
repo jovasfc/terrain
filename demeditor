@@ -1,0 +1,734 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+  <title>地形灰度图 · GeoTIFF 滤波与缩放工具</title>
+  <!-- 引入 geotiff.js 库用于读写 GeoTIFF -->
+  <script src="https://cdn.jsdelivr.net/npm/geotiff@2.1.3/dist-browser/geotiff.js"></script>
+  <style>
+    :root {
+      --bg: #f5f0eb;
+      --surface: #ffffff;
+      --surface-alt: #faf8f5;
+      --text: #2c2416;
+      --text-secondary: #6b5e4a;
+      --border: #e0d8cc;
+      --accent: #8b6914;
+      --accent-hover: #6b4f0e;
+      --accent-light: #f0e6d0;
+      --radius: 12px;
+      --radius-sm: 8px;
+      --shadow: 0 1px 3px rgba(44,36,22,0.06), 0 4px 16px rgba(44,36,22,0.05);
+      --transition: 0.2s ease;
+    }
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body {
+      font-family: system-ui, -apple-system, 'Segoe UI', 'PingFang SC', sans-serif;
+      background: var(--bg); color: var(--text);
+      min-height: 100vh; line-height: 1.5;
+      padding: 20px;
+      display: flex; justify-content: center;
+    }
+    .app-container {
+      max-width: 1300px; width: 100%;
+      display: flex; flex-direction: column; gap: 24px;
+    }
+    header {
+      text-align: center; margin-bottom: 10px;
+    }
+    header .logo { font-size: 2.5rem; }
+    h1 { font-size: 1.8rem; font-weight: 700; color: #2c2416; }
+    .subtitle { color: #6b5e4a; font-size: 0.95rem; }
+
+    .main-layout {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 24px; align-items: start;
+    }
+    @media (max-width: 900px) {
+      .main-layout { grid-template-columns: 1fr; }
+    }
+
+    .card {
+      background: var(--surface); border-radius: var(--radius);
+      padding: 22px; box-shadow: var(--shadow); border: 1px solid var(--border);
+    }
+    .card-header { font-weight: 600; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
+
+    .upload-zone {
+      border: 2px dashed var(--border); border-radius: var(--radius);
+      padding: 28px 20px; text-align: center; cursor: pointer;
+      background: var(--surface-alt); transition: var(--transition);
+      display: flex; flex-direction: column; align-items: center; gap: 8px;
+      margin-bottom: 18px;
+    }
+    .upload-zone:hover { border-color: var(--accent); background: var(--accent-light); }
+    .upload-zone.drag-over { border-color: var(--accent); background: var(--accent-light); }
+    .upload-icon { font-size: 2.5rem; opacity: 0.7; }
+    .file-info { display: flex; align-items: center; gap: 6px; font-size: 0.85rem; background: #f0e6d0; padding: 6px 14px; border-radius: 20px; }
+    .file-info .dot { width: 8px; height: 8px; background: #4caf50; border-radius: 50%; }
+    input[type="file"] { display: none; }
+
+    .control-group { margin-bottom: 18px; }
+    .control-label { display: flex; justify-content: space-between; font-size: 0.85rem; font-weight: 500; margin-bottom: 6px; }
+    .control-value { font-weight: 700; color: var(--accent); }
+    .slider-row { display: flex; align-items: center; gap: 12px; }
+    input[type="range"] { flex:1; height: 6px; -webkit-appearance: none; background: #e0d8cc; border-radius: 3px; }
+    input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 20px; height: 20px; background: var(--accent); border-radius: 50%; cursor: pointer; border: 2px solid white; box-shadow: 0 1px 4px rgba(0,0,0,0.2); }
+    input[type="number"] { width: 70px; padding: 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); text-align: center; font-weight: 600; background: var(--surface-alt); }
+    .checkbox-group { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .checkbox-card {
+      display: flex; align-items: center; gap: 6px; padding: 8px 10px;
+      border: 2px solid var(--border); border-radius: var(--radius-sm);
+      background: var(--surface-alt); cursor: pointer; transition: var(--transition);
+    }
+    .checkbox-card.active { border-color: var(--accent); background: var(--accent-light); }
+    .checkbox-card input { accent-color: var(--accent); width: 16px; height: 16px; }
+    .radio-group { display: flex; gap: 8px; }
+    .radio-card { flex:1; }
+    .radio-card input { display: none; }
+    .radio-card label { display: block; text-align: center; padding: 10px; border: 2px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-alt); cursor: pointer; }
+    .radio-card input:checked+label { border-color: var(--accent); background: var(--accent-light); }
+
+    .btn {
+      padding: 10px 20px; border-radius: var(--radius-sm); font-weight: 600;
+      border: none; cursor: pointer; background: var(--accent); color: white;
+      display: inline-flex; align-items: center; gap: 6px; transition: var(--transition);
+    }
+    .btn:hover { background: var(--accent-hover); }
+    .btn-download { background: #2c5f2d; width: 100%; justify-content: center; }
+    .btn-download:hover { background: #1f4a20; }
+    .btn:disabled { opacity: 0.5; pointer-events: none; }
+    .btn-row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
+
+    .preview-panel { background: var(--surface); border-radius: var(--radius); padding: 16px; border: 1px solid var(--border); }
+    .preview-canvas-wrap { background: #faf8f5; border-radius: var(--radius-sm); display: flex; justify-content: center; align-items: center; min-height: 150px; background-image: linear-gradient(45deg, #eee 25%, transparent 25%), linear-gradient(-45deg, #eee 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #eee 75%), linear-gradient(-45deg, transparent 75%, #eee 75%); background-size: 16px 16px; }
+    canvas { max-width: 100%; max-height: 360px; display: block; }
+    .badge { background: var(--accent-light); color: var(--accent); padding: 2px 10px; border-radius: 12px; font-size: 0.75rem; }
+    .status-bar { margin-top: 14px; padding: 8px 12px; border-radius: var(--radius-sm); font-size: 0.8rem; text-align: center; background: #f8f6f1; }
+    .geo-info { font-size: 0.7rem; color: #6b5e4a; margin-top: 6px; word-break: break-all; }
+    .params-hint { font-size: 0.7rem; color: #b0a590; text-align: center; margin-top: 5px; }
+  </style>
+</head>
+<body>
+<div class="app-container">
+  <header>
+    <div class="logo">🏔️</div>
+    <h1>地形灰度图 · GeoTIFF 专业滤波工具</h1>
+    <div class="subtitle">支持 GeoTIFF 导入/导出 · 组合滤波 · 保留地理信息</div>
+  </header>
+
+  <div class="main-layout">
+    <!-- 左侧控制区 -->
+    <div class="card">
+      <div class="card-header"><span>⚙️</span> 设置与控制</div>
+
+      <div class="upload-zone" id="uploadZone">
+        <span class="upload-icon">📁</span>
+        <span id="uploadText">点击或拖放 GeoTIFF / PNG 文件</span>
+        <span style="font-size:0.75rem; color:#a09480;">支持 .tif .tiff .png</span>
+        <div class="file-info" id="fileInfo" style="display:none;">
+          <span class="dot"></span>
+          <span id="fileName"></span> · <span id="fileDims"></span>
+        </div>
+      </div>
+      <input type="file" id="fileInput" accept=".tif,.tiff,.png,image/tiff,image/png">
+
+      <div class="control-group">
+        <div class="control-label"><span>缩放因子</span><span class="control-value" id="scaleDisplay">1.00×</span></div>
+        <div class="slider-row">
+          <input type="range" id="scaleSlider" min="-1" max="1" step="0.01" value="0">
+          <input type="number" id="scaleNumber" value="1" min="0.1" max="16" step="0.1">
+        </div>
+      </div>
+
+      <div class="control-group">
+        <div class="control-label"><span>滤波选项 (多选)</span></div>
+        <div class="checkbox-group">
+          <label class="checkbox-card" id="cardGaussian"><input type="checkbox" id="chkGaussian" checked><span>高斯模糊</span></label>
+          <label class="checkbox-card" id="cardMedian"><input type="checkbox" id="chkMedian"><span>中值滤波</span></label>
+          <label class="checkbox-card" id="cardOpening"><input type="checkbox" id="chkOpening"><span>开运算(去峰)</span></label>
+          <label class="checkbox-card" id="cardClosing"><input type="checkbox" id="chkClosing"><span>闭运算(填谷)</span></label>
+        </div>
+      </div>
+
+      <div class="control-group">
+        <div class="control-label"><span>滤波半径</span><span class="control-value" id="radiusDisplay">0.0 px</span></div>
+        <div class="slider-row">
+          <input type="range" id="radiusSlider" min="0" max="20" step="0.5" value="0">
+          <input type="number" id="radiusNumber" value="0" min="0" max="20" step="0.5">
+        </div>
+      </div>
+
+      <div class="control-group">
+        <div class="control-label"><span>插值方法</span></div>
+        <div class="radio-group">
+          <div class="radio-card"><input type="radio" name="method" id="methodBilinear" value="bilinear" checked><label for="methodBilinear">双线性</label></div>
+          <div class="radio-card"><input type="radio" name="method" id="methodBicubic" value="bicubic"><label for="methodBicubic">双三次</label></div>
+        </div>
+      </div>
+
+      <div class="btn-row">
+        <button class="btn" id="btnProcess" disabled>🔍 执行处理</button>
+        <button class="btn btn-download" id="btnDownload" disabled>💾 下载 GeoTIFF</button>
+      </div>
+      <div class="status-bar" id="statusBar">等待导入图像...</div>
+      <div class="params-hint" id="paramsHint" style="display:none;">⚠️ 参数已更改，点击处理或下载更新</div>
+      <div class="geo-info" id="geoInfo"></div>
+    </div>
+
+    <!-- 右侧预览 -->
+    <div style="display:flex; flex-direction:column; gap:20px;">
+      <div class="preview-panel">
+        <h3>📷 原始图像 <span class="badge" id="originalBadge">未加载</span></h3>
+        <div class="preview-canvas-wrap"><canvas id="originalCanvas" style="display:none;"></canvas><span id="originalPlaceholder" style="color:#c4b99a; padding:40px;">导入后显示</span></div>
+      </div>
+      <div class="preview-panel">
+        <h3>✨ 处理结果 <span class="badge" id="resultBadge">等待处理</span></h3>
+        <div class="preview-canvas-wrap"><canvas id="resultCanvas" style="display:none;"></canvas><span id="resultPlaceholder" style="color:#c4b99a; padding:40px;">点击执行处理</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  (function() {
+    // DOM 元素
+    const uploadZone = document.getElementById('uploadZone');
+    const fileInput = document.getElementById('fileInput');
+    const uploadText = document.getElementById('uploadText');
+    const fileInfo = document.getElementById('fileInfo');
+    const fileNameEl = document.getElementById('fileName');
+    const fileDimsEl = document.getElementById('fileDims');
+    const scaleSlider = document.getElementById('scaleSlider');
+    const scaleNumber = document.getElementById('scaleNumber');
+    const scaleDisplay = document.getElementById('scaleDisplay');
+    const radiusSlider = document.getElementById('radiusSlider');
+    const radiusNumber = document.getElementById('radiusNumber');
+    const radiusDisplay = document.getElementById('radiusDisplay');
+    const btnProcess = document.getElementById('btnProcess');
+    const btnDownload = document.getElementById('btnDownload');
+    const statusBar = document.getElementById('statusBar');
+    const paramsHint = document.getElementById('paramsHint');
+    const geoInfoDiv = document.getElementById('geoInfo');
+    const originalCanvas = document.getElementById('originalCanvas');
+    const resultCanvas = document.getElementById('resultCanvas');
+    const originalPlaceholder = document.getElementById('originalPlaceholder');
+    const resultPlaceholder = document.getElementById('resultPlaceholder');
+    const originalBadge = document.getElementById('originalBadge');
+    const resultBadge = document.getElementById('resultBadge');
+
+    // 状态变量
+    let sourceGrayData = null;          // Float64Array
+    let sourceWidth = 0, sourceHeight = 0;
+    let originalImageData = null;      // 用于预览
+    let resultImageData = null;        // ImageData
+    let resultWidth = 0, resultHeight = 0;
+    let isProcessing = false;
+    let paramsChanged = false;
+    
+    // GeoTIFF 相关
+    let sourceGeoTiffData = null;      // ArrayBuffer 原始文件数据
+    let geoMetadata = null;            // 地理元数据 (geoKeys, bbox等)
+    let isGeoTiff = false;
+
+    const MAX_PIXELS = 8192 * 8192;
+
+    // 工具函数
+    function setStatus(text, type) {
+      statusBar.textContent = text;
+      statusBar.className = 'status-bar';
+      if (type === 'processing') statusBar.style.background = '#fff8e7';
+      else if (type === 'done') statusBar.style.background = '#edf7ed';
+      else statusBar.style.background = '#f8f6f1';
+    }
+
+    function sliderToScale(v) { return v >= 0 ? 1 + v * 15 : 1 + v * 0.9; }
+    function scaleToSlider(s) { return s >= 1 ? (s - 1) / 15 : (s - 1) / 0.9; }
+
+    function getScale() { return parseFloat(scaleNumber.value) || 1; }
+    function getRadius() { return parseFloat(radiusNumber.value) || 0; }
+    function getMethod() { return document.getElementById('methodBicubic').checked ? 'bicubic' : 'bilinear'; }
+    
+    function getFilters() {
+      const f = [];
+      if (document.getElementById('chkGaussian').checked) f.push('gaussian');
+      if (document.getElementById('chkMedian').checked) f.push('median');
+      if (document.getElementById('chkOpening').checked) f.push('opening');
+      if (document.getElementById('chkClosing').checked) f.push('closing');
+      return f;
+    }
+
+    function markParamsChanged() {
+      if (!isProcessing && sourceGrayData) {
+        paramsChanged = true;
+        paramsHint.style.display = '';
+        setStatus('⚠️ 参数已更改，请点击处理或下载', 'ready');
+      }
+    }
+
+    // 复选框样式同步
+    document.querySelectorAll('.checkbox-card').forEach(card => {
+      card.addEventListener('click', (e) => {
+        if (e.target.tagName === 'INPUT') return;
+        const cb = card.querySelector('input');
+        cb.checked = !cb.checked;
+        cb.dispatchEvent(new Event('change'));
+      });
+      card.querySelector('input').addEventListener('change', function() {
+        card.classList.toggle('active', this.checked);
+        markParamsChanged();
+      });
+      card.classList.toggle('active', card.querySelector('input').checked);
+    });
+
+    // 文件上传逻辑
+    uploadZone.addEventListener('click', () => fileInput.click());
+    uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.classList.add('drag-over'); });
+    uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('drag-over'));
+    uploadZone.addEventListener('drop', e => {
+      e.preventDefault();
+      uploadZone.classList.remove('drag-over');
+      if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+    });
+    fileInput.addEventListener('change', () => {
+      if (fileInput.files.length) handleFile(fileInput.files[0]);
+    });
+
+    async function handleFile(file) {
+      const name = file.name.toLowerCase();
+      const isTiff = name.endsWith('.tif') || name.endsWith('.tiff') || file.type === 'image/tiff';
+      
+      setStatus('加载文件中...', 'processing');
+      try {
+        const arrayBuffer = await file.arrayBuffer();
+        
+        if (isTiff) {
+          await loadGeoTIFF(arrayBuffer, file.name);
+        } else if (file.type.includes('png')) {
+          await loadPNG(arrayBuffer, file.name);
+        } else {
+          setStatus('❌ 不支持的文件格式，请使用 PNG 或 GeoTIFF', 'error');
+          return;
+        }
+        
+        fileNameEl.textContent = file.name;
+        fileDimsEl.textContent = `${sourceWidth}×${sourceHeight}`;
+        fileInfo.style.display = 'flex';
+        uploadText.style.display = 'none';
+        originalBadge.textContent = `${sourceWidth}×${sourceHeight}`;
+        btnProcess.disabled = false;
+        paramsChanged = false;
+        paramsHint.style.display = 'none';
+        setStatus('✅ 图像已加载，请调整参数并处理', 'done');
+        displayOriginalPreview();
+        clearResult();
+      } catch (err) {
+        console.error(err);
+        setStatus('❌ 加载失败: ' + err.message, 'error');
+      }
+    }
+
+    async function loadGeoTIFF(arrayBuffer, filename) {
+      sourceGeoTiffData = arrayBuffer;
+      isGeoTiff = true;
+      
+      const tiff = await GeoTIFF.fromArrayBuffer(arrayBuffer);
+      const image = await tiff.getImage();
+      sourceWidth = image.getWidth();
+      sourceHeight = image.getHeight();
+      
+      // 提取地理元数据
+      try {
+        geoMetadata = {
+          geoKeys: image.getGeoKeys ? image.getGeoKeys() : null,
+          bbox: image.getBoundingBox ? image.getBoundingBox() : null,
+          crs: image.getGeoKeys ? (image.getGeoKeys().ProjectedCSTypeGeoKey || image.getGeoKeys().GeographicTypeGeoKey || null) : null,
+          tiepoint: image.getTiePoints ? image.getTiePoints() : null,
+          pixelScale: image.getFileDirectory ? image.getFileDirectory().ModelPixelScale : null,
+          fileDirectory: image.getFileDirectory ? image.getFileDirectory() : null
+        };
+        geoInfoDiv.textContent = `🌐 Geo信息: ${geoMetadata.bbox ? 'BBox: ' + geoMetadata.bbox.map(v=>v.toFixed(4)).join(', ') : '已识别地理参考'}`;
+      } catch (e) {
+        geoMetadata = null;
+        geoInfoDiv.textContent = '⚠️ 未读取到地理信息';
+      }
+      
+      // 读取灰度数据
+      const rasters = await image.readRasters({ interleave: true });
+      const numPixels = sourceWidth * sourceHeight;
+      sourceGrayData = new Float64Array(numPixels);
+      
+      if (rasters.length === numPixels) {
+        // 单波段
+        for (let i = 0; i < numPixels; i++) sourceGrayData[i] = rasters[i];
+      } else if (rasters.length === numPixels * 3 || rasters.length === numPixels * 4) {
+        for (let i = 0; i < numPixels; i++) sourceGrayData[i] = rasters[i * 3] || rasters[i * 4];
+      } else {
+        sourceGrayData.fill(128);
+      }
+      
+      // 生成原始预览
+      originalImageData = grayToImageData(sourceGrayData, sourceWidth, sourceHeight);
+      displayOriginalPreview();
+    }
+
+    async function loadPNG(arrayBuffer, filename) {
+      isGeoTiff = false;
+      sourceGeoTiffData = null;
+      geoMetadata = null;
+      geoInfoDiv.textContent = '📌 PNG 不含地理信息';
+      
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+          sourceWidth = img.naturalWidth;
+          sourceHeight = img.naturalHeight;
+          const canvas = document.createElement('canvas');
+          canvas.width = sourceWidth;
+          canvas.height = sourceHeight;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0);
+          const imageData = ctx.getImageData(0, 0, sourceWidth, sourceHeight);
+          sourceGrayData = new Float64Array(sourceWidth * sourceHeight);
+          for (let i = 0; i < sourceWidth * sourceHeight; i++) {
+            sourceGrayData[i] = imageData.data[i * 4];
+          }
+          originalImageData = imageData;
+          resolve();
+        };
+        img.onerror = reject;
+        img.src = URL.createObjectURL(new Blob([arrayBuffer]));
+      });
+    }
+
+    function grayToImageData(gray, w, h) {
+      const img = new ImageData(w, h);
+      const d = img.data;
+      for (let i = 0; i < w * h; i++) {
+        const v = Math.round(Math.min(255, Math.max(0, gray[i])));
+        const idx = i * 4;
+        d[idx] = d[idx+1] = d[idx+2] = v;
+        d[idx+3] = 255;
+      }
+      return img;
+    }
+
+    function displayOriginalPreview() {
+      if (!originalImageData) return;
+      originalPlaceholder.style.display = 'none';
+      originalCanvas.style.display = 'block';
+      originalCanvas.width = sourceWidth;
+      originalCanvas.height = sourceHeight;
+      originalCanvas.getContext('2d').putImageData(originalImageData, 0, 0);
+    }
+
+    function clearResult() {
+      resultImageData = null;
+      resultCanvas.style.display = 'none';
+      resultPlaceholder.style.display = '';
+      resultBadge.textContent = '等待处理';
+      btnDownload.disabled = true;
+    }
+
+    // ---------- 滤波算法 (与之前相同) ----------
+    function applyFilters(src, w, h, filters, radius) {
+      if (radius < 0.5 || filters.length === 0) return new Float64Array(src);
+      let data = new Float64Array(src);
+      const r = Math.round(radius);
+      for (const f of filters) {
+        switch(f) {
+          case 'gaussian': data = gaussianBlur(data,w,h,radius); break;
+          case 'median': data = medianFilter(data,w,h,r); break;
+          case 'opening': data = morphOpen(data,w,h,r); break;
+          case 'closing': data = morphClose(data,w,h,r); break;
+        }
+      }
+      return data;
+    }
+
+    function gaussianBlur(src,w,h,radius) {
+      const sigma = radius/3, ks = Math.max(3, Math.floor(2*3*sigma+1)|1);
+      const half = Math.floor(ks/2);
+      const kernel = new Float64Array(ks);
+      let sum=0;
+      for(let i=0;i<ks;i++) { const x=i-half; kernel[i]=Math.exp(-(x*x)/(2*sigma*sigma)); sum+=kernel[i]; }
+      for(let i=0;i<ks;i++) kernel[i]/=sum;
+      const temp = new Float64Array(w*h);
+      for(let y=0;y<h;y++) for(let x=0;x<w;x++) {
+        let v=0; for(let k=-half;k<=half;k++) v+=src[y*w+Math.min(w-1,Math.max(0,x+k))]*kernel[k+half];
+        temp[y*w+x]=v;
+      }
+      const res = new Float64Array(w*h);
+      for(let y=0;y<h;y++) for(let x=0;x<w;x++) {
+        let v=0; for(let k=-half;k<=half;k++) v+=temp[Math.min(h-1,Math.max(0,y+k))*w+x]*kernel[k+half];
+        res[y*w+x]=v;
+      }
+      return res;
+    }
+
+    function medianFilter(src,w,h,r) {
+      const ws=2*r+1, res=new Float64Array(w*h), win=new Float64Array(ws*ws);
+      for(let y=0;y<h;y++) for(let x=0;x<w;x++) {
+        let idx=0;
+        for(let dy=-r;dy<=r;dy++) for(let dx=-r;dx<=r;dx++)
+          win[idx++]=src[Math.min(h-1,Math.max(0,y+dy))*w+Math.min(w-1,Math.max(0,x+dx))];
+        win.sort(); res[y*w+x]=win[Math.floor(win.length/2)];
+      }
+      return res;
+    }
+
+    function erode(src,w,h,r) {
+      const res=new Float64Array(w*h);
+      for(let y=0;y<h;y++) for(let x=0;x<w;x++) {
+        let m=255;
+        for(let dy=-r;dy<=r;dy++) for(let dx=-r;dx<=r;dx++)
+          m=Math.min(m,src[Math.min(h-1,Math.max(0,y+dy))*w+Math.min(w-1,Math.max(0,x+dx))]);
+        res[y*w+x]=m;
+      }
+      return res;
+    }
+
+    function dilate(src,w,h,r) {
+      const res=new Float64Array(w*h);
+      for(let y=0;y<h;y++) for(let x=0;x<w;x++) {
+        let m=0;
+        for(let dy=-r;dy<=r;dy++) for(let dx=-r;dx<=r;dx++)
+          m=Math.max(m,src[Math.min(h-1,Math.max(0,y+dy))*w+Math.min(w-1,Math.max(0,x+dx))]);
+        res[y*w+x]=m;
+      }
+      return res;
+    }
+
+    function morphOpen(src,w,h,r) { return dilate(erode(src,w,h,r),w,h,r); }
+    function morphClose(src,w,h,r) { return erode(dilate(src,w,h,r),w,h,r); }
+
+    function bilinearInterpolate(src,sw,sh,dw,dh) {
+      const res=new Float64Array(dw*dh), sx=sw/dw, sy=sh/dh;
+      for(let dy=0;dy<dh;dy++) {
+        const srcY=(dy+0.5)*sy-0.5, y0=Math.max(0,Math.min(sh-1,Math.floor(srcY))), y1=Math.min(sh-1,y0+1), fy=Math.max(0,Math.min(1,srcY-y0));
+        for(let dx=0;dx<dw;dx++) {
+          const srcX=(dx+0.5)*sx-0.5, x0=Math.max(0,Math.min(sw-1,Math.floor(srcX))), x1=Math.min(sw-1,x0+1), fx=Math.max(0,Math.min(1,srcX-x0));
+          const v00=src[y0*sw+x0], v10=src[y0*sw+x1], v01=src[y1*sw+x0], v11=src[y1*sw+x1];
+          res[dy*dw+dx]=Math.max(0,Math.min(255, (v00+(v10-v00)*fx)+((v01+(v11-v01)*fx)-(v00+(v10-v00)*fx))*fy ));
+        }
+      }
+      return res;
+    }
+
+    // 处理核心
+    async function performProcessing() {
+      if (!sourceGrayData) throw new Error('请先导入图像');
+      if (isProcessing) throw new Error('正在处理中');
+      
+      const scale = getScale();
+      const radius = getRadius();
+      const filters = getFilters();
+      const method = getMethod();
+      resultWidth = Math.round(sourceWidth * scale);
+      resultHeight = Math.round(sourceHeight * scale);
+      if (resultWidth < 1 || resultHeight < 1) throw new Error('输出尺寸无效');
+      if (resultWidth * resultHeight > MAX_PIXELS) throw new Error('输出图像过大');
+
+      isProcessing = true;
+      btnProcess.disabled = true;
+      btnDownload.disabled = true;
+      paramsChanged = false;
+      paramsHint.style.display = 'none';
+      setStatus('⏳ 处理中...', 'processing');
+
+      return new Promise((resolve, reject) => {
+        setTimeout(() => {
+          try {
+            const filtered = applyFilters(sourceGrayData, sourceWidth, sourceHeight, filters, radius);
+            let resultGray;
+            if (method === 'bilinear') resultGray = bilinearInterpolate(filtered, sourceWidth, sourceHeight, resultWidth, resultHeight);
+            else resultGray = bicubicInterpolate(filtered, sourceWidth, sourceHeight, resultWidth, resultHeight);
+            
+            resultImageData = grayToImageData(resultGray, resultWidth, resultHeight);
+            // 显示结果
+            resultPlaceholder.style.display = 'none';
+            resultCanvas.style.display = 'block';
+            resultCanvas.width = resultWidth;
+            resultCanvas.height = resultHeight;
+            resultCanvas.getContext('2d').putImageData(resultImageData, 0, 0);
+            resultBadge.textContent = `${resultWidth}×${resultHeight}`;
+            btnDownload.disabled = false;
+            setStatus('✅ 处理完成', 'done');
+            resolve();
+          } catch(e) {
+            setStatus('❌ 处理错误', 'error');
+            reject(e);
+          } finally {
+            isProcessing = false;
+            btnProcess.disabled = false;
+          }
+        }, 30);
+      });
+    }
+
+    function bicubicInterpolate(src,sw,sh,dw,dh) {
+      // 简化版双三次，保留核心
+      const res=new Float64Array(dw*dh), sx=sw/dw, sy=sh/dh;
+      for(let dy=0;dy<dh;dy++) {
+        const srcY=(dy+0.5)*sy-0.5, iy=Math.floor(srcY);
+        for(let dx=0;dx<dw;dx++) {
+          const srcX=(dx+0.5)*sx-0.5, ix=Math.floor(srcX);
+          let sum=0, wsum=0;
+          for(let m=-1;m<=2;m++) {
+            const yy = Math.min(sh-1,Math.max(0,iy+m));
+            for(let n=-1;n<=2;n++) {
+              const xx = Math.min(sw-1,Math.max(0,ix+n));
+              const w = cubicKernel(srcX-(ix+n)) * cubicKernel(srcY-(iy+m));
+              sum += src[yy*sw+xx] * w;
+              wsum += w;
+            }
+          }
+          res[dy*dw+dx]=Math.max(0,Math.min(255, wsum>0.001 ? sum/wsum : sum));
+        }
+      }
+      return res;
+    }
+    function cubicKernel(x) {
+      const ax=Math.abs(x);
+      if(ax<=1) return 1.5*ax*ax*ax-2.5*ax*ax+1;
+      if(ax<2) return -0.5*ax*ax*ax+2.5*ax*ax-4*ax+2;
+      return 0;
+    }
+
+    async function downloadGeoTIFF() {
+      if (!resultImageData) {
+        if (paramsChanged || !resultImageData) {
+          try { await performProcessing(); } catch(e) { return; }
+        }
+      }
+      if (!resultImageData) return;
+
+      try {
+        // 提取灰度数据
+        const gray = new Float64Array(resultWidth * resultHeight);
+        for (let i = 0; i < gray.length; i++) {
+          gray[i] = resultImageData.data[i * 4];
+        }
+
+        // 构建新的 GeoTIFF
+        let arrayBuffer;
+        if (isGeoTiff && sourceGeoTiffData && geoMetadata) {
+          // 基于原始 GeoTIFF 修改像素数据和尺寸
+          arrayBuffer = await createModifiedGeoTiff(gray, resultWidth, resultHeight);
+        } else {
+          // 从 PNG 创建简单 GeoTIFF (无地理信息)
+          arrayBuffer = await createSimpleGeoTiff(gray, resultWidth, resultHeight);
+        }
+
+        const blob = new Blob([arrayBuffer], { type: 'image/tiff' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        const baseName = fileNameEl.textContent.replace(/\.[^.]+$/, '');
+        a.download = `${baseName}_processed.tif`;
+        a.href = url;
+        a.click();
+        URL.revokeObjectURL(url);
+        setStatus('💾 GeoTIFF 已下载', 'done');
+      } catch (e) {
+        console.error(e);
+        setStatus('❌ 导出失败: ' + e.message, 'error');
+      }
+    }
+
+    async function createModifiedGeoTiff(grayData, width, height) {
+      // 解析原始 GeoTIFF
+      const originalTiff = await GeoTIFF.fromArrayBuffer(sourceGeoTiffData);
+      const originalImage = await originalTiff.getImage();
+      
+      // 获取原始文件目录
+      const originalFD = originalImage.getFileDirectory();
+      
+      // 准备新的像素数据 (Float32 for GeoTIFF)
+      const floatData = new Float32Array(width * height);
+      for (let i = 0; i < grayData.length; i++) floatData[i] = grayData[i];
+      
+      // 更新地理信息中的缩放
+      let newPixelScale = geoMetadata.pixelScale ? [...geoMetadata.pixelScale] : [1,1,0];
+      if (newPixelScale.length >= 2 && sourceWidth > 0) {
+        newPixelScale[0] = newPixelScale[0] * sourceWidth / width;
+        newPixelScale[1] = newPixelScale[1] * sourceHeight / height;
+      }
+      
+      // 使用 geotiff.js 写入新文件
+      const writer = new GeoTIFF.GeoTIFFImage();
+      writer.setWidth(width);
+      writer.setHeight(height);
+      writer.setSamplesPerPixel(1);
+      writer.setSampleFormat(1); // Float
+      writer.setBitsPerSample(32);
+      
+      // 复制地理标签
+      if (originalFD.ModelTiepoint) writer.setTiePoints(originalFD.ModelTiepoint);
+      else if (geoMetadata.tiepoint) writer.setTiePoints(geoMetadata.tiepoint);
+      
+      writer.setPixelScale(newPixelScale[0], newPixelScale[1]);
+      
+      if (geoMetadata.geoKeys) {
+        // 尝试设置地理键
+        try { writer.setGeoKeys(geoMetadata.geoKeys); } catch(e) {}
+      }
+      
+      writer.setImageData(floatData);
+      
+      const arrayBuffer = await writer.toArrayBuffer();
+      return arrayBuffer;
+    }
+
+    async function createSimpleGeoTiff(grayData, width, height) {
+      const floatData = new Float32Array(width * height);
+      for (let i = 0; i < grayData.length; i++) floatData[i] = grayData[i];
+      
+      const writer = new GeoTIFF.GeoTIFFImage();
+      writer.setWidth(width);
+      writer.setHeight(height);
+      writer.setSamplesPerPixel(1);
+      writer.setSampleFormat(1);
+      writer.setBitsPerSample(32);
+      writer.setImageData(floatData);
+      return writer.toArrayBuffer();
+    }
+
+    // 事件绑定
+    btnProcess.addEventListener('click', () => performProcessing().catch(e => setStatus('❌ '+e.message,'error')));
+    btnDownload.addEventListener('click', downloadGeoTIFF);
+
+    // 参数滑块同步
+    scaleSlider.addEventListener('input', () => {
+      scaleNumber.value = sliderToScale(parseFloat(scaleSlider.value)).toFixed(2);
+      scaleDisplay.textContent = parseFloat(scaleNumber.value).toFixed(2)+'×';
+      markParamsChanged();
+    });
+    scaleNumber.addEventListener('input', () => {
+      let v = parseFloat(scaleNumber.value)||1;
+      v = Math.min(16, Math.max(0.1, v));
+      scaleSlider.value = scaleToSlider(v);
+      scaleDisplay.textContent = v.toFixed(2)+'×';
+      markParamsChanged();
+    });
+    radiusSlider.addEventListener('input', () => {
+      radiusNumber.value = radiusSlider.value;
+      radiusDisplay.textContent = parseFloat(radiusSlider.value).toFixed(1)+' px';
+      markParamsChanged();
+    });
+    radiusNumber.addEventListener('input', () => {
+      let v = parseFloat(radiusNumber.value)||0;
+      v = Math.min(20, Math.max(0, v));
+      radiusSlider.value = v;
+      radiusDisplay.textContent = v.toFixed(1)+' px';
+      markParamsChanged();
+    });
+    
+    document.querySelectorAll('input[name="method"]').forEach(r => r.addEventListener('change', markParamsChanged));
+    
+    // 初始化显示
+    scaleDisplay.textContent = '1.00×';
+    radiusDisplay.textContent = '0.0 px';
+  })();
+</script>
+</body>
+</html>
