@@ -1083,7 +1083,7 @@
                             
                             if (layer) {
                                 console.log('点击了DEM点:', fileName);
-                                navigateToTerrainSim(fileName, layer.zipFile);
+                                navigateTo3DView(fileName, layer.zipFile);
                             }
                         }
                     }
@@ -1965,11 +1965,11 @@
                         }).setContent(fileName);
                         
                         marker.bindTooltip(label);
-                        marker.bindPopup(`<b>${fileName}</b><br>点击在地形模拟中打开`);
+                        marker.bindPopup(`<b>${fileName}</b><br>点击查看3D地形`);
                         
                         marker.on('click', function(e) {
                             e.originalEvent.stopPropagation();
-                            navigateToTerrainSim(fileName, layer.zipFile);
+                            navigateTo3DView(fileName, layer.zipFile);
                         });
                         
                         return marker;
@@ -2009,7 +2009,7 @@
                         const featureType = feature.properties.featureType || 'polygon';
                         
                         if (featureType === 'point') {
-                            leafletLayer.bindPopup(`<b>${fileName}</b><br>点击在地形模拟中打开`);
+                            leafletLayer.bindPopup(`<b>${fileName}</b><br>点击查看3D地形`);
                         }
                         
                         // 只在featureType为polygon时添加点击事件监听器
@@ -2017,7 +2017,7 @@
                         if (featureType === 'polygon') {
                             leafletLayer.on('click', function(e) {
                                 e.originalEvent.stopPropagation();
-                                navigateToTerrainSim(fileName, layer.zipFile);
+                                navigateTo3DView(fileName, layer.zipFile);
                             });
                         }
                     }
@@ -2099,11 +2099,6 @@
                               title="${layer.name}">${truncateFileName(layer.name)}</span>
                     </div>
                     <div class="flex gap-1 ml-2 flex-shrink-0">
-                        ${layer.zipFile ? `<button onclick="openInTerrainSim(${layer.id})" 
-                                class="text-amber-500 hover:text-amber-700 text-xs px-2 py-1 rounded hover:bg-amber-50 transition-colors"
-                                title="在地形模拟中打开">
-                            打开
-                        </button>` : ''}
                         <button onclick="zoomToLayer(${layer.id})" 
                                 class="text-blue-500 hover:text-blue-700 text-xs px-2 py-1 rounded hover:bg-blue-50 transition-colors"
                                 title="缩放至图层">
@@ -3233,75 +3228,6 @@
                     }
                 ]
             };
-        }
-
-        // 在地形模拟中打开图层
-        function openInTerrainSim(layerId) {
-            const layer = layers.find(l => l.id === layerId);
-            if (!layer) return;
-            navigateToTerrainSim(layer.name, layer.zipFile);
-        }
-
-        // 跳转到地形模拟流水版
-        async function navigateToTerrainSim(fileName, zipFile = null) {
-            try {
-                const loading = document.getElementById('loading');
-                const status = document.getElementById('status-msg');
-                loading.classList.remove('hidden');
-                status.innerText = "正在准备跳转到地形模拟...";
-                
-                // 使用传入的ZIP文件
-                let file = zipFile;
-                
-                // 如果没有传入，尝试从全局ZIP文件映射中获取
-                if (!file && window.zipFilesMap) {
-                    file = window.zipFilesMap[fileName];
-                }
-                
-                // 如果还是没有，尝试使用旧的引用方式
-                if (!file && window.currentZipFile) {
-                    file = window.currentZipFile;
-                }
-                
-                if (file) {
-                    // 存储到IndexedDB，使用文件名作为键名
-                    const db = await openIndexedDB();
-                    const transaction = db.transaction(['zipFiles'], 'readwrite');
-                    const store = transaction.objectStore('zipFiles');
-                    
-                    // 使用文件名作为键名，并设置当前文件名
-                    store.put({ blob: file, timestamp: Date.now() }, fileName);
-                    store.put({ currentFileName: fileName }, 'currentFileName');
-                    
-                    await new Promise((resolve, reject) => {
-                        transaction.oncomplete = resolve;
-                        transaction.onerror = () => reject(transaction.error);
-                    });
-                    
-                    console.log('ZIP文件已存储到IndexedDB:', file.name, '键名:', fileName);
-                    
-                    // 设置就绪标记
-                    localStorage.setItem('terrainZipReady', Date.now().toString());
-                    localStorage.setItem('currentZipFileName', fileName);
-                    
-                    // 跳转到地形模拟流水版
-                    const url = new URL('地形模拟流水版.html', window.location.href);
-                    url.searchParams.set('autoLoad', 'pending');
-                    url.searchParams.set('fileName', fileName);
-                    window.open(url.toString(), '_blank');
-                    
-                    status.innerText = "已跳转到地形模拟流水版";
-                } else {
-                    alert('未找到ZIP文件，请重新导入');
-                    status.innerText = "错误: 未找到ZIP文件";
-                }
-            } catch (err) {
-                console.error('跳转失败:', err);
-                alert('跳转失败: ' + err.message);
-                document.getElementById('status-msg').innerText = "错误: " + err.message;
-            } finally {
-                document.getElementById('loading').classList.add('hidden');
-            }
         }
 
         // 跳转到3D地形图
